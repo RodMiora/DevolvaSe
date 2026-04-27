@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0A0A0A;
+  --foreground: #FFFFFF;
+  --surface: #1A1A1A;
+  --text-secondary: #888888;
+  --vu-green: #00C853;
+  --vu-yellow: #FFD600;
+  --vu-orange: #FF6D00;
+  --vu-red: #D50000;
+  --vu-gradient: linear-gradient(to right, var(--vu-green), var(--vu-yellow), var(--vu-orange), var(--vu-red));
+  --vu-gradient-v: linear-gradient(to top, var(--vu-green), var(--vu-yellow), var(--vu-orange), var(--vu-red));
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-secondary-text: var(--text-secondary);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.vu-gradient-bg {
+  background: var(--vu-gradient);
+}
+
+.vu-gradient-text {
+  background: var(--vu-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Custom inputs styling */
+input {
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: white;
+  transition: all 0.2s;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--vu-green);
+  box-shadow: 0 0 0 1px var(--vu-green);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface);
+  border-radius: 10px;
+}
