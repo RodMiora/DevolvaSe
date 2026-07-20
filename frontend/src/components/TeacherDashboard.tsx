@@ -581,8 +581,8 @@ export default function TeacherDashboard() {
                           <Paperclip className="w-5 h-5" />
                         </button>
                         <input 
-                          type="text" 
-                          placeholder="Digite sua mensagem..." 
+                          type="text"
+                          placeholder="Digite sua mensagem..."
                           className="flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-zinc-600"
                         />
                         <button className="p-3 text-zinc-400 hover:text-white transition-colors">
