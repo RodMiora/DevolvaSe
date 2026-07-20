@@ -26,7 +26,9 @@ import {
   X,
   Loader2,
   Eye,
-  EyeOff
+  EyeOff,
+  Pencil,
+  Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +55,9 @@ interface Message {
 interface Module {
   id: string;
   title: string;
+  description?: string;
+  instrument_id?: string;
+  order?: number;
   lessons: Lesson[];
 }
 
@@ -65,9 +70,9 @@ interface Lesson {
 
 interface Course {
   id: string;
-  title: string;
-  instrument: string;
-  modules_count: number;
+  name: string;
+  icon_url?: string;
+  created_at: string;
 }
 
 interface CourseVideo {
@@ -93,6 +98,9 @@ export default function TeacherDashboard() {
   const [openModules, setOpenModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showAddCourseModal, setShowAddCourseModal] = useState(false);
+  const [showEditCourseModal, setShowEditCourseModal] = useState(false);
   
   // Add Student Form State
   const [fullName, setFullName] = useState("");
@@ -100,6 +108,24 @@ export default function TeacherDashboard() {
   const [password, setPassword] = useState("");
   const [instrument, setInstrument] = useState("Guitarra");
   const [showPassword, setShowPassword] = useState(false);
+  
+  // Upload Video Form State
+  const [videoTitle, setVideoTitle] = useState("");
+  const [videoDescription, setVideoDescription] = useState("");
+  const [selectedModule, setSelectedModule] = useState("");
+  const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [courseModules, setCourseModules] = useState<Module[]>([]);
+
+  // Add/Edit Course Form State
+  const [courseName, setCourseName] = useState("");
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+
+  // Add/Edit Module Form State
+  const [showAddModuleModal, setShowAddModuleModal] = useState(false);
+  const [selectedCourseForModule, setSelectedCourseForModule] = useState<string | null>(null);
+  const [moduleTitle, setModuleTitle] = useState("");
+  const [moduleDescription, setModuleDescription] = useState("");
 
   useEffect(() => {
     fetchStudents();
@@ -107,13 +133,19 @@ export default function TeacherDashboard() {
   }, []);
 
   const fetchCourses = async () => {
-    // In a real scenario, this would fetch from 'instruments' or a 'courses' table
-    const mockCourses: Course[] = [
-      { id: '1', title: 'Guitarra Iniciante', instrument: 'Guitarra', modules_count: 5 },
-      { id: '2', title: 'Violão Popular', instrument: 'Violão', modules_count: 3 },
-      { id: '3', title: 'Bateria do Zero', instrument: 'Bateria', modules_count: 4 },
-    ];
-    setCourses(mockCourses);
+    try {
+      const { data, error } = await supabase
+        .from('instruments')
+        .select('*')
+        .order('created_at', { ascending: true });
+      
+      if (error) throw error;
+      
+      console.log('fetchCourses data:', data);
+      setCourses(data || []);
+    } catch (error) {
+      console.error('Error fetching courses:', error);
+    }
   };
 
   const fetchCourseVideos = async (courseId: string) => {
@@ -126,10 +158,35 @@ export default function TeacherDashboard() {
   };
 
   useEffect(() => {
+    console.log('useEffect selectedCourse changed:', selectedCourse);
     if (selectedCourse) {
       fetchCourseVideos(selectedCourse.id);
+      fetchCourseModules(selectedCourse.id);
     }
   }, [selectedCourse]);
+
+  const fetchCourseModules = async (courseId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('modules')
+        .select('*')
+        .eq('instrument_id', courseId)
+        .order('order', { ascending: true });
+      
+      if (error) throw error;
+      
+      setCourseModules((data || []).map((m: any) => ({ 
+        id: m.id, 
+        title: m.title, 
+        description: m.description, 
+        instrument_id: m.instrument_id, 
+        order: m.order, 
+        lessons: [] 
+      })));
+    } catch (error) {
+      console.error('Error fetching modules:', error);
+    }
+  };
 
   useEffect(() => {
     if (selectedStudent) {
@@ -196,8 +253,11 @@ export default function TeacherDashboard() {
       const formattedModules = modulesData.map(mod => ({
         id: mod.id,
         title: mod.title,
-        lessons: mod.lessons.map((lesson: any) => {
-          const access = accessData?.find(a => a.lesson_id === lesson.id);
+        description: mod.description,
+        instrument_id: mod.instrument_id,
+        order: mod.order,
+        lessons: (mod.lessons || []).map((lesson: any) => {
+          const access = (accessData || []).find(a => a.lesson_id === lesson.id);
           return {
             id: lesson.id,
             title: lesson.title,
@@ -223,7 +283,7 @@ export default function TeacherDashboard() {
     if (!error) {
       setModules(prev => prev.map(mod => ({
         ...mod,
-        lessons: mod.lessons.map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked } : l)
+        lessons: (mod.lessons || []).map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked } : l)
       })));
     }
   };
@@ -258,6 +318,185 @@ export default function TeacherDashboard() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log('Iniciando criacao do instrumento...', courseName);
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('instruments')
+        .insert([{ name: courseName }])
+        .select();
+      
+      if (error) throw error;
+      
+      console.log('Curso criado com sucesso:', data);
+      setShowAddCourseModal(false);
+      setCourseName("");
+      fetchCourses();
+    } catch (err: any) {
+      console.error('Erro ao criar curso:', err);
+      alert('Erro ao criar curso: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCourse) return;
+    console.log('Iniciando edição do curso...', courseName);
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('instruments')
+        .update({ name: courseName })
+        .eq('id', editingCourse.id)
+        .select();
+      
+      if (error) throw error;
+      
+      console.log('Curso editado com sucesso:', data);
+      setShowEditCourseModal(false);
+      setCourseName("");
+      setEditingCourse(null);
+      fetchCourses();
+    } catch (err: any) {
+      console.error('Erro ao editar curso:', err);
+      alert('Erro ao editar curso: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    if (!confirm('Tem certeza que deseja apagar este curso?')) return;
+    console.log('Iniciando exclusão do curso...', courseId);
+    try {
+      const { error } = await supabase
+        .from('instruments')
+        .delete()
+        .eq('id', courseId);
+      
+      if (error) throw error;
+      
+      console.log('Curso excluído com sucesso');
+      fetchCourses();
+      if (selectedCourse?.id === courseId) {
+        setSelectedCourse(null);
+      }
+    } catch (err: any) {
+      console.error('Erro ao excluir curso:', err);
+      alert('Erro ao excluir curso: ' + err.message);
+    }
+  };
+
+  const handleAddModule = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  // Tenta pegar o ID do curso selecionado no estado global, do seletor do modal ou de uma variável de suporte
+  const targetCourseId = 
+    selectedCourse?.id || 
+    (typeof selectedCourseForModule !== 'undefined' ? selectedCourseForModule : null) || 
+    (window as any).selectedCourseForModuleId;
+
+  console.log('handleAddModule called!', { selectedCourse, selectedCourseForModule, targetCourseId, moduleTitle, moduleDescription });
+
+  if (!targetCourseId) {
+    console.error('Nenhum curso selecionado!');
+    alert('Por favor, selecione um curso na lista lateral ou no campo de seleção antes de adicionar um módulo!');
+    return;
+  }
+
+  console.log('Iniciando criação do módulo...', targetCourseId, moduleTitle);
+  setLoading(true);
+  try {
+    // 1. Busca a maior ordem atual para este instrumento
+    const { data: existingModules, error: fetchError } = await supabase
+      .from('modules')
+      .select('order')
+      .eq('instrument_id', targetCourseId)
+      .order('order', { ascending: false })
+      .limit(1);
+      
+    if (fetchError) throw fetchError;
+    
+    const nextOrder = existingModules && existingModules.length > 0 ? (existingModules[0].order || 0) + 1 : 1;
+    
+    // 2. Insere o novo módulo no Supabase
+    const { data, error } = await supabase
+      .from('modules')
+      .insert([{ 
+        instrument_id: targetCourseId, 
+        title: moduleTitle, 
+        description: moduleDescription,
+        order: nextOrder
+      }])
+      .select();
+      
+    if (error) throw error;
+    
+    console.log('Módulo criado com sucesso:', data);
+    alert('Módulo criado com sucesso!');
+    
+    setShowAddModuleModal(false);
+    setModuleTitle("");
+    setModuleDescription("");
+    if (typeof setSelectedCourseForModule === 'function') {
+      setSelectedCourseForModule(null);
+    }
+    
+    // Atualiza a lista de módulos do curso correspondente
+    fetchCourseModules(targetCourseId);
+  } catch (err: any) {
+    console.error('Erro ao criar módulo:', err);
+    alert('Erro ao criar módulo: ' + err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  const handleUploadVideo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedModule || !selectedVideoFile) return;
+    
+    console.log('Iniciando upload do vídeo...', videoTitle);
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('module_id', selectedModule);
+      formData.append('title', videoTitle);
+      formData.append('description', videoDescription);
+      formData.append('video', selectedVideoFile);
+
+      const response = await fetch('http://localhost:8000/upload-lesson-video', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Vídeo enviado com sucesso:', data);
+        setShowUploadModal(false);
+        setVideoTitle("");
+        setVideoDescription("");
+        setSelectedModule("");
+        setSelectedVideoFile(null);
+        // Refresh course videos if needed
+        if (selectedCourse) {
+          fetchCourseVideos(selectedCourse.id);
+        }
+      } else {
+        const errorText = await response.text();
+        console.error('Erro na resposta do servidor:', errorText);
+      }
+    } catch (err) {
+      console.error('Erro ao enviar vídeo:', err);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -324,8 +563,16 @@ export default function TeacherDashboard() {
         <div className="p-6 space-y-4">
           {activeTab === 'cursos' ? (
             <div className="flex flex-col gap-1">
-              <h3 className="text-xl font-bold">Meus Cursos</h3>
-              <p className="text-zinc-500 text-xs">Gerencie seu conteúdo por instrumento.</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold">Meus Cursos</h3>
+                <button
+                  onClick={() => setShowAddCourseModal(true)}
+                  className="p-2 bg-[#22c55e] rounded-full text-black hover:bg-[#16a34a] transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-zinc-500 text-xs">Gerencie seu conteúdo por Instrumento.</p>
             </div>
           ) : (
             <button 
@@ -343,7 +590,7 @@ export default function TeacherDashboard() {
               type="text"
               placeholder={activeTab === 'cursos' ? "Buscar curso..." : "Buscar aluno..."}
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-11 pr-4 text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
             />
           </div>
@@ -351,25 +598,55 @@ export default function TeacherDashboard() {
 
         <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-6">
           {activeTab === 'cursos' ? (
-            courses.filter(c => c.title.toLowerCase().includes(searchQuery.toLowerCase())).map((course) => (
-              <button
+            courses.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map((course) => (
+              <div
                 key={course.id}
-                onClick={() => setSelectedCourse(course)}
                 className={cn(
-                  "w-full p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 group text-left",
+                  "w-full p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between group relative",
                   selectedCourse?.id === course.id 
                     ? "bg-zinc-900 border-[#22c55e]/30 shadow-[0_0_20px_rgba(34,197,94,0.05)]" 
                     : "bg-transparent border-transparent hover:bg-white/5"
                 )}
               >
-                <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center">
-                  <BookOpen className="w-6 h-6 text-zinc-500" />
+                <button
+                  onClick={() => {
+                    console.log('Course clicked:', course);
+                    setSelectedCourse(course);
+                    console.log('selectedCourse after set:', course);
+                  }}
+                  className="flex items-center gap-4 flex-1 text-left"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center">
+                    <BookOpen className="w-6 h-6 text-zinc-500" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm truncate">{course.name}</h4>
+                    <p className="text-[0.6875rem] text-zinc-500 font-medium">{courseModules.length} Módulos • {course.name}</p>
+                  </div>
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingCourse(course);
+                      setCourseName(course.name);
+                      setShowEditCourseModal(true);
+                    }}
+                    className="p-2 text-zinc-500 hover:text-[#22c55e] transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteCourse(course.id);
+                    }}
+                    className="p-2 text-zinc-500 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <div>
-                  <h4 className="font-bold text-sm truncate">{course.title}</h4>
-                  <p className="text-[0.6875rem] text-zinc-500 font-medium">{course.modules_count} Módulos • {course.instrument}</p>
-                </div>
-              </button>
+              </div>
             ))
           ) : (
             students.filter(s => s.full_name.toLowerCase().includes(searchQuery.toLowerCase())).map((student) => (
@@ -430,12 +707,27 @@ export default function TeacherDashboard() {
             <>
               <header className="h-20 border-b border-white/5 flex items-center justify-between px-8 bg-[#0d0d0d]/30 backdrop-blur-md">
                 <div className="flex items-center gap-6">
-                  <h2 className="text-xl font-bold">Gerenciar Curso: <span className="text-zinc-500">{selectedCourse.title}</span></h2>
+                  <h2 className="text-xl font-bold">Gerenciar Curso: <span className="text-zinc-500">{selectedCourse.name}</span></h2>
                 </div>
-                <button className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm shadow-lg shadow-green-500/10 active:scale-[0.98] transition-all flex items-center gap-2">
-                  <Plus className="w-5 h-5" />
-                  Upload de Novo Vídeo
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedCourseForModule(selectedCourse?.id || null);
+                      setShowAddModuleModal(true);
+                    }}
+                    className="px-6 py-3 rounded-xl bg-zinc-800 text-white font-bold text-sm hover:bg-zinc-700 transition-colors flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar Módulo
+                  </button>
+                  <button 
+                    onClick={() => setShowUploadModal(true)}
+                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm shadow-lg shadow-green-500/10 active:scale-[0.98] transition-all flex items-center gap-2"
+                  >
+                    <Plus className="w-5 h-5" />
+                    Upload de Novo Vídeo
+                  </button>
+                </div>
               </header>
               
               <div className="flex-1 overflow-y-auto p-8 grid grid-cols-2 lg:grid-cols-3 gap-6">
@@ -631,7 +923,7 @@ export default function TeacherDashboard() {
 
                         {openModules.includes(module.id) && (
                           <div className="px-5 pb-5 grid grid-cols-1 gap-3">
-                            {module.lessons.map((lesson) => (
+                            {(module.lessons || []).map((lesson) => (
                               <div key={lesson.id} className={cn(
                                 "flex items-center justify-between p-4 rounded-xl border transition-all",
                                 lesson.is_locked ? "bg-black/40 border-white/5" : "bg-[#22c55e]/5 border-[#22c55e]/20"
@@ -686,7 +978,7 @@ export default function TeacherDashboard() {
         )}
       </main>
 
-      {/* Modal de Cadastro (Adaptado do original) */}
+      {/* Modal de Cadastro */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
           <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -751,12 +1043,9 @@ export default function TeacherDashboard() {
                   onChange={e => setInstrument(e.target.value)}
                   className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors appearance-none"
                 >
-                  <option>Guitarra</option>
-                  <option>Violão</option>
-                  <option>Bateria</option>
-                  <option>Baixo</option>
-                  <option>Teclado</option>
-                  <option>Ukulele</option>
+                  {courses.map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
                 </select>
               </div>
 
@@ -766,6 +1055,251 @@ export default function TeacherDashboard() {
                 className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
               >
                 {loading ? <Loader2 className="animate-spin" size={20} /> : "CADASTRAR ALUNO"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Adicionar Curso */}
+      {showAddCourseModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Novo Curso</h2>
+                <p className="text-zinc-500 text-sm">Adicione um novo instrumento/curso.</p>
+              </div>
+              <button onClick={() => setShowAddCourseModal(false)} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleAddCourse} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Nome do Curso</label>
+                <input 
+                  placeholder="Ex: Violão Clássico" 
+                  value={courseName}
+                  onChange={e => setCourseName(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
+              >
+                {loading ? <Loader2 className="animate-spin" size={20} /> : "ADICIONAR CURSO"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Editar Curso */}
+      {showEditCourseModal && editingCourse && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Editar Curso</h2>
+                <p className="text-zinc-500 text-sm">Altere o nome do curso e gerencie módulos.</p>
+              </div>
+              <button onClick={() => { setShowEditCourseModal(false); setEditingCourse(null); }} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleEditCourse} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Nome do Curso</label>
+                <input 
+                  placeholder="Ex: Violão Clássico" 
+                  value={courseName}
+                  onChange={e => setCourseName(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+
+              <div className="border-t border-white/5 pt-6 mt-2">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-white">Módulos</h3>
+                  <button
+                    onClick={(e) => { 
+                      e.preventDefault(); 
+                      setSelectedCourseForModule(editingCourse?.id || null);
+                      setShowAddModuleModal(true); 
+                    }}
+                    className="flex items-center gap-2 text-[#22c55e] text-sm font-bold hover:text-[#16a34a] transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar Módulo
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {courseModules.map(module => (
+                    <div key={module.id} className="flex items-center justify-between p-3 rounded-xl bg-zinc-800/50 border border-white/5">
+                      <span className="text-sm text-white">{module.title}</span>
+                      <button
+                        className="p-2 text-zinc-500 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
+              >
+                {loading ? <Loader2 className="animate-spin" size={20} /> : "SALVAR ALTERAÇÕES"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Adicionar Módulo */}
+      {showAddModuleModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Novo Módulo</h2>
+                <p className="text-zinc-500 text-sm">Adicione um novo módulo ao curso.</p>
+              </div>
+              <button onClick={() => setShowAddModuleModal(false)} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleAddModule} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Curso</label>
+                <select 
+                  value={selectedCourseForModule || ""}
+                  onChange={e => setSelectedCourseForModule(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors appearance-none"
+                >
+                  <option value="">Selecione um curso</option>
+                  {courses.map((course) => (
+                    <option key={course.id} value={course.id}>{course.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Título do Módulo</label>
+                <input 
+                  placeholder="Ex: Módulo 1 - Fundamentos" 
+                  value={moduleTitle}
+                  onChange={e => setModuleTitle(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Descrição (opcional)</label>
+                <textarea 
+                  placeholder="Breve descrição do módulo..." 
+                  value={moduleDescription}
+                  onChange={e => setModuleDescription(e.target.value)}
+                  rows={3}
+                  className="w-full bg-zinc-800/50 border border-white/5 px-6 py-4 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors resize-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
+              >
+                {loading ? <Loader2 className="animate-spin" size={20} /> : "ADICIONAR MÓDULO"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Upload de Vídeo */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Novo Vídeo de Aula</h2>
+                <p className="text-zinc-500 text-sm">Preencha os dados e envie o vídeo.</p>
+              </div>
+              <button onClick={() => setShowUploadModal(false)} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleUploadVideo} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Título do Vídeo</label>
+                <input 
+                  placeholder="Ex: Postura Correta para Tocar" 
+                  value={videoTitle}
+                  onChange={e => setVideoTitle(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Descrição (opcional)</label>
+                <textarea 
+                  placeholder="Breve descrição do vídeo..." 
+                  value={videoDescription}
+                  onChange={e => setVideoDescription(e.target.value)}
+                  rows={3}
+                  className="w-full bg-zinc-800/50 border border-white/5 px-6 py-4 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors resize-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Módulo</label>
+                <select 
+                  value={selectedModule}
+                  onChange={e => setSelectedModule(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors appearance-none"
+                >
+                  <option value="">Selecione um módulo</option>
+                  {courseModules.map((module) => (
+                    <option key={module.id} value={module.id}>{module.title}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Arquivo de Vídeo</label>
+                <div className="relative">
+                  <input 
+                    type="file"
+                    accept="video/*"
+                    onChange={e => setSelectedVideoFile(e.target.files ? e.target.files[0] : null)}
+                    required
+                    className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#22c55e] file:text-black hover:file:bg-[#16a34a]"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={uploading || !selectedVideoFile || !selectedModule}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploading ? <Loader2 className="animate-spin" size={20} /> : "ENVIAR VÍDEO"}
               </button>
             </form>
           </div>

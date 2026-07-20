@@ -132,13 +132,13 @@ export default function Home() {
     <main className="h-full">
       <MobileLayout
         hasChatNotification={true}
+        onLogout={() => supabase.auth.signOut()}
         chat={<ChatScreen userId={mockUser.id} receiverId={MOCK_TEACHER_ID} />}
         aulas={
           <div className="relative h-full">
             <LessonsScreen 
               studentName={mockUser.name} 
               instrument={mockUser.instrument} 
-              lessons={MOCK_LESSONS}
             />
           </div>
         }

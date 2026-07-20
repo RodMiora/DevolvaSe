@@ -29,11 +29,13 @@ export default function MobileLayout({
   aulas,
   envio,
   hasChatNotification = false,
+  onLogout,
 }: {
   chat: React.ReactNode;
   aulas: React.ReactNode;
   envio: React.ReactNode;
   hasChatNotification?: boolean;
+  onLogout: () => void;
 }) {
   const [[page, direction], setPage] = useState([1, 0]);
   const activeTab = page;
@@ -67,8 +69,15 @@ export default function MobileLayout({
     <div className="fixed inset-0 w-screen h-screen flex flex-col bg-black text-white overflow-hidden select-none font-sans">
       {/* Header Fixo - Altura fixa de 80px */}
       <header className="h-[80px] flex flex-col justify-center bg-black z-50 flex-shrink-0">
-        <div className="flex justify-center mb-2">
+        <div className="flex justify-between items-center px-4 mb-2">
+          <div className="w-16"></div> {/* Espaçador para centralizar o logo */}
           <Logo className="scale-90" />
+          <button
+            onClick={onLogout}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-lg transition-colors"
+          >
+            Sair
+          </button>
         </div>
         
         {/* Tabs Navigation */}

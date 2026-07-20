@@ -3,6 +3,7 @@ CREATE TABLE profiles (
     id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
     full_name TEXT,
     avatar_url TEXT,
+    instrument TEXT,
     role TEXT CHECK (role IN ('teacher', 'student')) DEFAULT 'student',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -85,12 +86,27 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update their own profile" ON profiles FOR UPDATE USING (auth.uid() = id);
 
+-- Allow all operations on instruments, modules, lessons (for service role and teachers)
 CREATE POLICY "Instruments are viewable by everyone" ON instruments FOR SELECT USING (true);
+CREATE POLICY "Teachers can manage instruments" ON instruments FOR ALL USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
+);
+
 CREATE POLICY "Modules are viewable by everyone" ON modules FOR SELECT USING (true);
+CREATE POLICY "Teachers can manage modules" ON modules FOR ALL USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
+);
+
 CREATE POLICY "Lessons are viewable by everyone" ON lessons FOR SELECT USING (true);
+CREATE POLICY "Teachers can manage lessons" ON lessons FOR ALL USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
+);
 
 CREATE POLICY "Students can view their own lesson status" ON student_lessons FOR SELECT USING (auth.uid() = student_id);
 CREATE POLICY "Teachers can view all student lesson status" ON student_lessons FOR SELECT USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
+);
+CREATE POLICY "Teachers can manage student lesson status" ON student_lessons FOR ALL USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
 );
 
@@ -98,9 +114,15 @@ CREATE POLICY "Students can view their own exercises" ON exercises FOR SELECT US
 CREATE POLICY "Teachers can view all exercises" ON exercises FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
 );
+CREATE POLICY "Teachers can manage exercises" ON exercises FOR ALL USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'teacher')
+);
 
 CREATE POLICY "Users can view their own chat messages" ON chat_messages FOR SELECT USING (
     auth.uid() = sender_id OR auth.uid() = receiver_id
+);
+CREATE POLICY "Users can send chat messages" ON chat_messages FOR INSERT WITH CHECK (
+    auth.uid() = sender_id
 );
 
 -- Insert initial instruments

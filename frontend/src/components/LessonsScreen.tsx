@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Play, CheckCircle2, Lock, MessageSquare, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/lib/supabase";
 
 interface Lesson {
   id: string;
@@ -14,12 +15,81 @@ interface Lesson {
 export default function LessonsScreen({
   studentName,
   instrument,
-  lessons,
 }: {
   studentName: string;
   instrument: string;
-  lessons: Lesson[];
 }) {
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchLessons = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // Fetch modules and lessons
+        const { data: modulesData } = await supabase
+          .from('modules')
+          .select('*, lessons(*)')
+          .order('order', { ascending: true });
+
+        // Fetch student lesson access
+        const { data: accessData } = await supabase
+          .from('student_lessons')
+          .select('*')
+          .eq('student_id', user.id);
+
+        // Fetch student exercises
+        const { data: exercisesData } = await supabase
+          .from('exercises')
+          .select('*')
+          .eq('student_id', user.id);
+
+        if (modulesData) {
+          const allLessons: Lesson[] = [];
+          modulesData.forEach((mod: any) => {
+            (mod.lessons || []).forEach((lesson: any) => {
+              const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id);
+              const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id);
+
+              let status: Lesson['status'] = 'locked';
+              if (access) {
+                if (access.is_completed) status = 'completed';
+                else if (exercise) status = 'in-progress';
+                else if (!access.is_locked) status = 'in-progress';
+              }
+
+              allLessons.push({
+                id: lesson.id,
+                title: lesson.title,
+                description: lesson.description || '',
+                thumbnail: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400",
+                duration: "5:00",
+                status
+              });
+            });
+          });
+          setLessons(allLessons);
+        }
+      } catch (error) {
+        console.error('Error fetching lessons:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLessons();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full bg-black">
+        <div className="w-12 h-12 border-4 border-[#00C853] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-black relative w-full overflow-hidden">
       {/* Scrollable Content */}
@@ -44,7 +114,7 @@ export default function LessonsScreen({
 
         {/* Lessons Timeline */}
         <div className="space-y-4">
-          {lessons.map((lesson) => (
+          {(lessons || []).map((lesson) => (
             <div
               key={lesson.id}
               className={cn(
