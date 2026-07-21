@@ -181,6 +181,32 @@ async def upload_audio(
     finally:
         if os.path.exists(temp_file): os.remove(temp_file)
 
+@app.post("/upload-chat-file")
+async def upload_chat_file(
+    sender_id: str = Form(...),
+    receiver_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    file_id = str(uuid.uuid4())
+    temp_file = f"chat_{file_id}_{file.filename}"
+    
+    try:
+        with open(temp_file, "wb") as buffer:
+            buffer.write(await file.read())
+            
+        r2_key = f"chat/{sender_id}/{temp_file}"
+        s3_client.upload_file(temp_file, settings.R2_BUCKET_NAME, r2_key)
+        
+        file_url = f"{settings.R2_ENDPOINT_URL}/{settings.R2_BUCKET_NAME}/{r2_key}"
+        
+        return {
+            "success": True,
+            "file_url": file_url,
+            "file_name": file.filename
+        }
+    finally:
+        if os.path.exists(temp_file): os.remove(temp_file)
+
 @app.post("/upload-lesson-video")
 async def upload_lesson_video(
     module_id: str = Form(...),

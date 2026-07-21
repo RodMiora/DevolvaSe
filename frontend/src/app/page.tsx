@@ -12,7 +12,26 @@ import TeacherDashboard from "@/components/TeacherDashboard";
 export default function Home() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
+  const [teacherId, setTeacherId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const fetchTeacherId = async () => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'teacher')
+      .limit(1)
+      .single();
+    
+    if (error) {
+      console.error("Erro ao buscar ID do professor:", error);
+      // Usa o ID fixo como fallback
+      setTeacherId('54268554-9b11-4986-9c02-c1637b0863fc');
+    } else {
+      // Se encontrar o perfil, usa o ID do banco, senão usa o fixo
+      setTeacherId(data?.id || '54268554-9b11-4986-9c02-c1637b0863fc');
+    }
+  };
 
   useEffect(() => {
     const fetchProfile = async (userId: string) => {
@@ -51,6 +70,7 @@ export default function Home() {
       setSession(session);
       if (session) {
         fetchProfile(session.user.id);
+        fetchTeacherId(); // Fetch teacherId only after we have a session
       } else {
         setLoading(false);
       }
@@ -62,8 +82,10 @@ export default function Home() {
       setSession(session);
       if (session) {
         fetchProfile(session.user.id);
+        fetchTeacherId(); // Fetch teacherId when auth state changes to authenticated
       } else {
         setProfile(null);
+        setTeacherId(null);
       }
     });
 
@@ -110,6 +132,19 @@ export default function Home() {
     return <TeacherDashboard />;
   }
 
+  // Wait for teacherId to be loaded
+  if (!teacherId && !loading) {
+    return (
+      <div className="fixed inset-0 bg-[#0A0A0A] flex flex-col items-center justify-center p-6 text-center">
+        <div className="text-yellow-500 mb-4">⚠️</div>
+        <h2 className="text-white text-xl font-bold mb-2">Aguardando professor</h2>
+        <p className="text-[#888888]">
+          Não foi encontrado um professor no sistema. Verifique a tabela profiles.
+        </p>
+      </div>
+    );
+  }
+
   console.log("Rendering Student MobileLayout...");
 
   const user = session.user;
@@ -120,7 +155,6 @@ export default function Home() {
     instrument: profile?.instrument || "Guitarra" 
   };
   
-  const MOCK_TEACHER_ID = "teacher_123";
   const MOCK_LESSONS = [
     { id: "l1", title: "Acordes Básicos", is_locked: false, is_completed: true, video_url: "https://example.com/video1.mp4" },
     { id: "l2", title: "Escala Pentatônica", is_locked: false, is_completed: false, video_url: "https://example.com/video2.mp4" },
@@ -133,7 +167,7 @@ export default function Home() {
       <MobileLayout
         hasChatNotification={true}
         onLogout={() => supabase.auth.signOut()}
-        chat={<ChatScreen userId={mockUser.id} receiverId={MOCK_TEACHER_ID} />}
+        chat={teacherId ? <ChatScreen userId={mockUser.id} receiverId={teacherId} /> : null}
         aulas={
           <div className="relative h-full">
             <LessonsScreen 
@@ -142,7 +176,7 @@ export default function Home() {
             />
           </div>
         }
-        envio={<EnvioScreen studentId={mockUser.id} lessonId="l2" />}
+        envio={<EnvioScreen studentId={mockUser.id} />}
       />
     </main>
   );

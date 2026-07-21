@@ -3,15 +3,15 @@ import { cn } from '@/lib/utils';
 
 export default function Logo({ className, showText = true }: { className?: string, showText?: boolean }) {
   return (
-    <div className={cn("flex items-center gap-2", className)}>
+    <div className={cn("flex items-center justify-center gap-3", className)}>
       {/* Equalizer SVG Icon */}
       <svg 
-        width="32" 
-        height="24" 
+        width="64" 
+        height="48" 
         viewBox="0 0 32 24" 
         fill="none" 
         xmlns="http://www.w3.org/2000/svg"
-        className="w-8 h-6"
+        className="w-16 h-12"
       >
         {/* 7 Bars - Fiel ao Mockup */}
         <rect x="0" y="14" width="3" height="4" rx="1" fill="#22c55e">
@@ -45,7 +45,7 @@ export default function Logo({ className, showText = true }: { className?: strin
       </svg>
       
       {showText && (
-        <h1 className="text-2xl font-bold tracking-tight font-sans flex items-center">
+        <h1 className="text-4xl font-bold tracking-tight font-sans flex items-center">
           <span className="text-white">Devolva</span>
           <span 
             className="bg-clip-text text-transparent bg-gradient-to-r from-[#f97316] to-[#ef4444]"

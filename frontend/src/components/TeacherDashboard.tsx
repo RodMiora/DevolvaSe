@@ -44,6 +44,7 @@ interface Student {
 interface Message {
   id: string;
   sender_id: string;
+  receiver_id: string;
   content: string;
   type: 'text' | 'audio' | 'video' | 'image' | 'emoji';
   created_at: string;
@@ -95,8 +96,17 @@ export default function TeacherDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
+  const [allModules, setAllModules] = useState<Module[]>([]);
+  const [chatInput, setChatInput] = useState<string>("");
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+  const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
   const [openModules, setOpenModules] = useState<string[]>([]);
+  const messagesChannelRef = useRef<any>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(false);
+  const [teacherId, setTeacherId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showAddCourseModal, setShowAddCourseModal] = useState(false);
@@ -130,7 +140,44 @@ export default function TeacherDashboard() {
   useEffect(() => {
     fetchStudents();
     fetchCourses();
+    fetchAllModules();
+    
+    // Get teacher's ID from auth
+    const getTeacherId = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) setTeacherId(user.id);
+    };
+    getTeacherId();
+    
+    // Clean up on unmount
+    return () => {
+      if (messagesChannelRef.current) {
+        supabase.removeChannel(messagesChannelRef.current);
+      }
+    };
   }, []);
+
+  const fetchAllModules = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('modules')
+        .select('*')
+        .order('order', { ascending: true });
+      
+      if (error) throw error;
+      
+      setAllModules((data || []).map((m: any) => ({ 
+        id: m.id, 
+        title: m.title, 
+        description: m.description, 
+        instrument_id: m.instrument_id, 
+        order: m.order, 
+        lessons: [] 
+      })));
+    } catch (error) {
+      console.error('Error fetching all modules:', error);
+    }
+  };
 
   const fetchCourses = async () => {
     try {
@@ -189,27 +236,55 @@ export default function TeacherDashboard() {
   };
 
   useEffect(() => {
-    if (selectedStudent) {
-      fetchMessages(selectedStudent.id);
-      fetchStudentLessons(selectedStudent.id);
+    console.log("selectedStudent changed:", selectedStudent, "teacherId:", teacherId);
+    if (selectedStudent && teacherId) {
+      const studentUserId = selectedStudent.id;
+      console.log("Calling fetchMessages for student:", studentUserId);
+      fetchMessages(studentUserId);
+      fetchStudentLessons(selectedStudent.id, selectedStudent.instrument);
+      
+      // Clean up previous channel if it exists
+      if (messagesChannelRef.current) {
+        supabase.removeChannel(messagesChannelRef.current);
+      }
       
       // Subscribe to real-time messages
       const channel = supabase
-        .channel(`chat:${selectedStudent.id}`)
+        .channel(`chat:${studentUserId}`)
         .on('postgres_changes', { 
           event: 'INSERT', 
           schema: 'public', 
-          table: 'chat_messages' 
+          table: 'chat_messages'
         }, payload => {
-          setMessages(prev => [...prev, payload.new as Message]);
+          const newMsg = payload.new as Message;
+          // Only add message if it's part of the conversation between teacher and student
+          if (
+            (newMsg.sender_id === teacherId && newMsg.receiver_id === studentUserId) ||
+            (newMsg.sender_id === studentUserId && newMsg.receiver_id === teacherId)
+          ) {
+            setMessages(prev => [...prev, newMsg]);
+          }
         })
         .subscribe();
 
+      messagesChannelRef.current = channel;
+
       return () => {
-        supabase.removeChannel(channel);
+        if (messagesChannelRef.current) {
+          supabase.removeChannel(messagesChannelRef.current);
+          messagesChannelRef.current = null;
+        }
       };
     }
-  }, [selectedStudent]);
+  }, [selectedStudent, courses, teacherId]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    console.log("Auto-scrolling to bottom, scrollRef:", scrollRef.current);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo(0, scrollRef.current.scrollHeight);
+    }
+  }, [messages]);
 
   const fetchStudents = async () => {
     const { data, error } = await supabase
@@ -229,20 +304,203 @@ export default function TeacherDashboard() {
     }
   };
 
-  const fetchMessages = async (studentId: string) => {
-    const { data } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .or(`sender_id.eq.${studentId},receiver_id.eq.${studentId}`)
-      .order('created_at', { ascending: true });
-    
-    if (data) setMessages(data);
+  const fetchMessages = async (studentUserId: string) => { 
+    if (!teacherId || !studentUserId) return; 
+ 
+    const studentAuthId = studentUserId; 
+ 
+    // Busca todas as mensagens trocadas estritamente entre este professor e este aluno 
+    const { data, error } = await supabase 
+      .from('chat_messages') 
+      .select('*') 
+      .or(`and(sender_id.eq.${teacherId},receiver_id.eq.${studentAuthId}),and(sender_id.eq.${studentAuthId},receiver_id.eq.${teacherId})`) 
+      .order('created_at', { ascending: true }); 
+ 
+    if (error) { 
+      console.error('Erro ao buscar mensagens do professor:', error); 
+    } else if (data) { 
+      setMessages(data); 
+    } 
   };
 
-  const fetchStudentLessons = async (studentId: string) => {
-    const { data: modulesData } = await supabase
-      .from('modules')
-      .select('*, lessons(*)');
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !selectedStudent) return;
+    
+    // Primeiro, vamos pegar o ID do usuário autenticado (professor)
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Validate that sender_id and receiver_id are valid
+    if (!user.id || !selectedStudent.id) {
+      alert("IDs de usuário inválidos!");
+      return;
+    }
+
+    try {
+      // Create a temporary local message for optimistic update
+      const tempId = `temp_${Date.now()}`;
+      const tempMessage = {
+        id: tempId,
+        sender_id: user.id,
+        receiver_id: selectedStudent.id,
+        content: chatInput.trim(),
+        type: 'text' as const,
+        created_at: new Date().toISOString()
+      } as any;
+
+      // Optimistic update: add to local state immediately
+      setMessages(prev => [...prev, tempMessage]);
+      
+      // Clear input right away
+      const inputValue = chatInput;
+      setChatInput("");
+
+      const messageData = {
+        sender_id: user.id,
+        receiver_id: selectedStudent.id,
+        content: inputValue.trim(),
+        type: 'text' as const
+      };
+
+      const { error } = await supabase
+        .from('chat_messages')
+        .insert(messageData);
+
+      if (error) {
+        // Rollback optimistic update on error
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+        throw error;
+      }
+    } catch (err) {
+      console.error("Erro ao enviar mensagem:", err);
+      alert("Erro ao enviar mensagem: " + (err as Error).message);
+    }
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedStudent) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const formData = new FormData();
+    formData.append('sender_id', user.id);
+    formData.append('receiver_id', selectedStudent.id);
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('http://localhost:8000/upload-chat-file', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) throw new Error('Erro no upload do arquivo');
+      
+      const result = await response.json();
+      
+      // Determine message type based on file type
+      let messageType: 'audio' | 'video' | 'text' = 'text';
+      if (file.type.startsWith('video/')) {
+        messageType = 'video';
+      } else if (file.type.startsWith('audio/')) {
+        messageType = 'audio';
+      }
+
+      // Save message to Supabase
+      await supabase.from('chat_messages').insert({
+        sender_id: user.id,
+        receiver_id: selectedStudent.id,
+        content: result.file_url,
+        type: messageType,
+        file_name: result.file_name,
+        media_url: result.file_url
+      });
+    } catch (err) {
+      console.error('Erro ao enviar arquivo:', err);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        await sendAudioMessage(audioBlob);
+      };
+
+      setMediaRecorder(recorder);
+      setAudioChunks(chunks);
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Erro ao iniciar gravação:', err);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.stop();
+      setIsRecording(false);
+      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const sendAudioMessage = async (audioBlob: Blob) => {
+    if (!selectedStudent) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const formData = new FormData();
+    formData.append('sender_id', user.id);
+    formData.append('receiver_id', selectedStudent.id);
+    formData.append('audio', audioBlob, 'audio.webm');
+
+    try {
+      const response = await fetch('http://localhost:8000/upload-audio', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) throw new Error('Erro no upload do áudio');
+      
+      const result = await response.json();
+
+      // Save message to Supabase
+      await supabase.from('chat_messages').insert({
+        sender_id: user.id,
+        receiver_id: selectedStudent.id,
+        content: result.audio_url,
+        type: 'audio',
+        file_name: 'Áudio gravado',
+        media_url: result.audio_url
+      });
+    } catch (err) {
+      console.error('Erro ao enviar áudio:', err);
+    }
+  };
+
+  const fetchStudentLessons = async (studentId: string, studentInstrumentName?: string) => {
+    // Encontra o curso (instrumento) correspondente ao instrumento do aluno
+    const studentCourse = courses.find(c => c.name.toLowerCase() === studentInstrumentName?.toLowerCase());
+    
+    // Busca apenas os módulos do instrumento do aluno
+    let modulesQuery = supabase.from('modules').select('*, lessons(*)');
+    if (studentCourse) {
+      modulesQuery = modulesQuery.eq('instrument_id', studentCourse.id);
+    }
+    
+    const { data: modulesData } = await modulesQuery;
     
     const { data: accessData } = await supabase
       .from('student_lessons')
@@ -449,8 +707,9 @@ export default function TeacherDashboard() {
       setSelectedCourseForModule(null);
     }
     
-    // Atualiza a lista de módulos do curso correspondente
+    // Atualiza a lista de módulos do curso correspondente e todos os módulos
     fetchCourseModules(targetCourseId);
+    fetchAllModules();
   } catch (err: any) {
     console.error('Erro ao criar módulo:', err);
     alert('Erro ao criar módulo: ' + err.message);
@@ -621,7 +880,7 @@ export default function TeacherDashboard() {
                   </div>
                   <div>
                     <h4 className="font-bold text-sm truncate">{course.name}</h4>
-                    <p className="text-[0.6875rem] text-zinc-500 font-medium">{courseModules.length} Módulos • {course.name}</p>
+                    <p className="text-[0.6875rem] text-zinc-500 font-medium">{allModules.filter(m => m.instrument_id === course.id).length} Módulos • {course.name}</p>
                   </div>
                 </button>
                 <div className="flex items-center gap-2">
@@ -830,31 +1089,47 @@ export default function TeacherDashboard() {
                     <span className="font-bold text-sm">{selectedStudent.full_name}</span>
                   </div>
                   
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                  <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
                     {messages.map((msg) => {
-                      const isMe = msg.sender_id !== selectedStudent.id;
+                      console.log('Renderizando mensagem:', msg);
+                      const isMe = msg.sender_id === teacherId;
+                      const mediaUrl = (msg as any).media_url || msg.content;
                       return (
                         <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
                           <div className={cn(
                             "max-w-[70%] px-4 py-3 rounded-2xl relative",
                             isMe 
-                              ? "bg-gradient-to-r from-[#22c55e] to-[#f97316] text-white rounded-tr-none" 
-                              : "bg-zinc-900 border border-[#f97316]/20 text-white rounded-tl-none"
+                              ? "bg-zinc-700 text-white rounded-tr-none" 
+                              : "bg-zinc-800 border border-zinc-700 text-white rounded-tl-none"
                           )}>
                             {msg.type === 'video' && (
                               <div className="flex flex-col gap-2 min-w-[14rem] mb-2">
-                                <div className="relative aspect-video rounded-xl overflow-hidden bg-black/20 group cursor-pointer">
-                                  <img src={msg.thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400"} alt="Video" className="w-full h-full object-cover opacity-80" />
-                                  <div className="absolute inset-0 flex items-center justify-center">
-                                    <div className="w-10 h-10 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/40 group-hover:scale-110 transition-transform">
-                                      <Play className="w-5 h-5 text-white fill-white" />
-                                    </div>
-                                  </div>
-                                </div>
-                                <span className="text-[0.75rem] font-bold opacity-90 truncate">{msg.file_name || "Treino.mp4"}</span>
+                                <video 
+                                  src={mediaUrl} 
+                                  controls 
+                                  className="w-full rounded-xl bg-black/20"
+                                  poster={msg.thumbnail_url || undefined}
+                                />
+                                {msg.file_name && (
+                                  <span className="text-[0.75rem] font-bold opacity-90 truncate">{msg.file_name}</span>
+                                )}
                               </div>
                             )}
-                            <p className="text-sm leading-relaxed">{msg.content}</p>
+                            {msg.type === 'audio' && (
+                              <div className="flex flex-col gap-2 min-w-[14rem] mb-2">
+                                <audio 
+                                  src={mediaUrl} 
+                                  controls 
+                                  className="w-full"
+                                />
+                                {msg.file_name && (
+                                  <span className="text-[0.75rem] font-bold opacity-90 truncate">{msg.file_name}</span>
+                                )}
+                              </div>
+                            )}
+                            {msg.type === 'text' && (
+                              <p className="text-sm leading-relaxed">{msg.content}</p>
+                            )}
                             <span className="text-[0.625rem] opacity-50 mt-1 block text-right">
                               {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
@@ -865,25 +1140,87 @@ export default function TeacherDashboard() {
                   </div>
 
                   {/* Input Bar */}
-                  <div className="p-6 bg-gradient-to-t from-black to-transparent">
+                  <div className="p-6 bg-gradient-to-t from-black to-transparent relative">
                     <div className="relative max-w-4xl mx-auto">
                       <div className="absolute -inset-[1px] bg-gradient-to-r from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-2xl opacity-20 blur-sm" />
                       <div className="relative flex items-center gap-2 bg-zinc-900/90 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl">
-                        <button className="p-3 text-zinc-400 hover:text-white transition-colors">
+                        {/* Hidden file input */}
+                        <input 
+                          type="file" 
+                          id="file-upload" 
+                          className="hidden" 
+                          onChange={handleFileSelect}
+                          accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
+                        />
+                        
+                        <button 
+                          onClick={() => document.getElementById('file-upload')?.click()}
+                          className="p-3 text-zinc-400 hover:text-white transition-colors"
+                        >
                           <Paperclip className="w-5 h-5" />
                         </button>
+                        
                         <input 
                           type="text"
                           placeholder="Digite sua mensagem..."
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSendMessage();
+                            }
+                          }}
                           className="flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-zinc-600"
                         />
-                        <button className="p-3 text-zinc-400 hover:text-white transition-colors">
+                        
+                        <button 
+                          onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                          className="p-3 text-zinc-400 hover:text-white transition-colors relative"
+                        >
                           <Smile className="w-5 h-5" />
                         </button>
-                        <button className="w-11 h-11 bg-gradient-to-r from-[#22c55e] to-[#f97316] rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all">
-                          <Mic className="w-5 h-5 text-white" />
-                        </button>
+                        
+                        {chatInput.trim() ? (
+                          <button 
+                            onClick={handleSendMessage}
+                            className="w-11 h-11 bg-gradient-to-r from-[#22c55e] to-[#f97316] rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                          >
+                            <Send className="w-5 h-5 text-white" />
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={isRecording ? stopRecording : startRecording}
+                            className={`w-11 h-11 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all ${
+                              isRecording 
+                                ? 'bg-red-500 animate-pulse' 
+                                : 'bg-gradient-to-r from-[#22c55e] to-[#f97316]'
+                            }`}
+                          >
+                            <Mic className="w-5 h-5 text-white" />
+                          </button>
+                        )}
                       </div>
+                      
+                      {/* Emoji Picker */}
+                      {showEmojiPicker && (
+                        <div className="absolute bottom-full mb-4 left-0 right-0 bg-zinc-900 border border-white/10 rounded-xl p-3 shadow-xl max-h-48 overflow-y-auto">
+                          <div className="grid grid-cols-8 gap-2">
+                            {['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻', '👽', '👾', '🤖'].map((emoji, index) => (
+                              <button
+                                key={index}
+                                onClick={() => {
+                                  setChatInput(prev => prev + emoji);
+                                  setShowEmojiPicker(false);
+                                }}
+                                className="text-2xl hover:bg-zinc-800 rounded-lg p-1 transition-colors"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
