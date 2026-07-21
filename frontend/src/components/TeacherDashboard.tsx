@@ -138,6 +138,17 @@ export default function TeacherDashboard() {
   const [selectedCourseForModule, setSelectedCourseForModule] = useState<string | null>(null);
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleDescription, setModuleDescription] = useState("");
+  
+  // Configurações states
+  const [teacherName, setTeacherName] = useState("");
+  const [teacherLogin, setTeacherLogin] = useState("");
+  const [teacherAvatar, setTeacherAvatar] = useState("");
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [theme, setTheme] = useState("dark"); // dark, light, neon
+  const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
     fetchStudents();
@@ -862,7 +873,18 @@ export default function TeacherDashboard() {
             </div>
           </div>
           
-          {activeTab === 'cursos' ? (
+          {/* Conteúdo da COLUNA 2 baseado no activeTab */}
+          {activeTab === 'dashboard' ? (
+            <div className="flex flex-col gap-1">
+              <h3 className="text-xl font-bold">Bem-vindo!</h3>
+              <p className="text-zinc-500 text-xs">Veja o resumo do seu ensino na área ao lado.</p>
+            </div>
+          ) : activeTab === 'config' ? (
+            <div className="flex flex-col gap-1">
+              <h3 className="text-xl font-bold">Configurações</h3>
+              <p className="text-zinc-500 text-xs">Ajuste o seu perfil e preferências.</p>
+            </div>
+          ) : activeTab === 'cursos' ? (
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <h3 className="text-xl font-bold">Meus Cursos</h3>
@@ -885,19 +907,24 @@ export default function TeacherDashboard() {
             </button>
           )}
 
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-            <input 
-              type="text"
-              placeholder={activeTab === 'cursos' ? "Buscar curso..." : "Buscar aluno..."}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-11 pr-4 text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
-            />
-          </div>
+          {/* Search (apenas para cursos e alunos) */}
+          {(activeTab === 'cursos' || activeTab === 'alunos') && (
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <input 
+                type="text"
+                placeholder={activeTab === 'cursos' ? "Buscar curso..." : "Buscar aluno..."}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-zinc-900/50 border border-white/5 rounded-xl py-3 pl-11 pr-4 text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+              />
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-6">
+        {/* List (apenas para cursos e alunos) */}
+        {(activeTab === 'cursos' || activeTab === 'alunos') && (
+          <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-6">
           {activeTab === 'cursos' ? (
             courses.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map((course) => (
               <div
@@ -998,12 +1025,297 @@ export default function TeacherDashboard() {
               </button>
             ))
           )}
-        </div>
+          </div>
+        )}
       </section>
 
       {/* COLUNA 3 - Área de Ação */}
       <main className="flex-1 flex flex-col bg-black relative">
-        {activeTab === 'cursos' ? (
+        {activeTab === 'dashboard' ? (
+          <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+            {/* Header da Dashboard */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold">Dashboard</h2>
+                <p className="text-sm text-zinc-500 mt-1">Resumo geral do seu ensino</p>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowAddModal(true)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 text-white font-bold text-sm hover:bg-zinc-700 transition-colors flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Adicionar Aluno
+                </button>
+                <button 
+                  onClick={() => setShowAddCourseModal(true)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm shadow-lg shadow-green-500/10 active:scale-[0.98] transition-all flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Adicionar Curso
+                </button>
+              </div>
+            </div>
+
+            {/* Cards de Métricas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#22c55e]/10 flex items-center justify-center">
+                    <Users className="w-5 h-5 text-[#22c55e]" />
+                  </div>
+                </div>
+                <p className="text-2xl font-bold">{students.length}</p>
+                <p className="text-xs text-zinc-500 mt-1">Total de Alunos</p>
+              </div>
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#f97316]/10 flex items-center justify-center">
+                    <Users className="w-5 h-5 text-[#f97316]" />
+                  </div>
+                </div>
+                <p className="text-2xl font-bold">48</p>
+                <p className="text-xs text-zinc-500 mt-1">Alunos Ativos</p>
+              </div>
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#3b82f6]/10 flex items-center justify-center">
+                    <BookOpen className="w-5 h-5 text-[#3b82f6]" />
+                  </div>
+                </div>
+                <p className="text-2xl font-bold">{courses.length}</p>
+                <p className="text-xs text-zinc-500 mt-1">Cursos</p>
+              </div>
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#ef4444]/10 flex items-center justify-center">
+                    <MessageCircle className="w-5 h-5 text-[#ef4444]" />
+                  </div>
+                </div>
+                <p className="text-2xl font-bold">7</p>
+                <p className="text-xs text-zinc-500 mt-1">Treinos Pendentes</p>
+              </div>
+            </div>
+
+            {/* Últimas Atividades */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <h3 className="font-bold mb-4">Últimas Mensagens</h3>
+                <div className="space-y-3">
+                  {students.slice(0, 3).map((student) => (
+                    <div key={student.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer" onClick={() => { setActiveTab('alunos'); setSelectedStudent(student); }}>
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800">
+                        <img src={student.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`} alt={student.full_name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate">{student.full_name}</p>
+                        <p className="text-xs text-zinc-500">Última conversa: Hoje</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+                <h3 className="font-bold mb-4">Cursos Recentes</h3>
+                <div className="space-y-3">
+                  {courses.slice(0, 3).map((course) => (
+                    <div key={course.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer" onClick={() => { setActiveTab('cursos'); setSelectedCourse(course); }}>
+                      <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
+                        <BookOpen className="w-5 h-5 text-zinc-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate">{course.name}</p>
+                        <p className="text-xs text-zinc-500">Criado em {new Date(course.created_at).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : activeTab === 'config' ? (
+          <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+            {/* Header das Configurações */}
+            <div>
+              <h2 className="text-2xl font-bold">Configurações</h2>
+              <p className="text-sm text-zinc-500 mt-1">Ajuste o seu perfil e preferências</p>
+            </div>
+
+            {/* Seção Perfil */}
+            <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+              <h3 className="font-bold mb-4">Perfil do Professor</h3>
+              <div className="space-y-4">
+                {/* Avatar */}
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-full overflow-hidden bg-zinc-800">
+                      <img 
+                        src={teacherAvatar || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100"} 
+                        alt="Avatar" 
+                        className="w-full h-full object-cover" 
+                      />
+                    </div>
+                    <label className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-[#22c55e] flex items-center justify-center cursor-pointer hover:bg-[#16a34a] transition-colors">
+                      <Plus className="w-4 h-4 text-black" />
+                      <input 
+                        type="file" 
+                        className="hidden" 
+                        accept="image/*" 
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => setTeacherAvatar(reader.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        }} 
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Nome</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                    placeholder="Seu nome"
+                    value={teacherName}
+                    onChange={(e) => setTeacherName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Nome de Acesso (Login)</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                    placeholder="Seu login"
+                    value={teacherLogin}
+                    onChange={(e) => setTeacherLogin(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Instrumentos que Ensina</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                    placeholder="Ex: Guitarra, Piano"
+                  />
+                </div>
+
+                <button 
+                  disabled={savingProfile}
+                  onClick={() => {
+                    setSavingProfile(true);
+                    setTimeout(() => setSavingProfile(false), 1500);
+                  }}
+                  className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-sm font-bold hover:opacity-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {savingProfile ? "Salvando..." : "Salvar Alterações"}
+                </button>
+              </div>
+            </div>
+
+            {/* Seção Preferências - Tema */}
+            <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+              <h3 className="font-bold mb-4">Tema do App</h3>
+              <div className="grid grid-cols-3 gap-4">
+                <button 
+                  onClick={() => setTheme("dark")}
+                  className={cn(
+                    "p-4 rounded-xl border transition-all",
+                    theme === "dark" 
+                      ? "bg-zinc-800 border-[#22c55e]/50" 
+                      : "bg-zinc-800/50 border-transparent hover:border-white/10"
+                  )}
+                >
+                  <div className="w-full h-20 bg-black rounded-lg mb-2 border border-zinc-800" />
+                  <p className="text-xs font-bold">Escuro</p>
+                </button>
+
+                <button 
+                  onClick={() => setTheme("light")}
+                  className={cn(
+                    "p-4 rounded-xl border transition-all",
+                    theme === "light" 
+                      ? "bg-zinc-800 border-[#22c55e]/50" 
+                      : "bg-zinc-800/50 border-transparent hover:border-white/10"
+                  )}
+                >
+                  <div className="w-full h-20 bg-white rounded-lg mb-2 border border-zinc-200" />
+                  <p className="text-xs font-bold">Claro</p>
+                </button>
+
+                <button 
+                  onClick={() => setTheme("neon")}
+                  className={cn(
+                    "p-4 rounded-xl border transition-all",
+                    theme === "neon" 
+                      ? "bg-zinc-800 border-[#22c55e]/50" 
+                      : "bg-zinc-800/50 border-transparent hover:border-white/10"
+                  )}
+                >
+                  <div className="w-full h-20 rounded-lg mb-2 bg-gradient-to-br from-purple-900 to-pink-900" />
+                  <p className="text-xs font-bold">Neon</p>
+                </button>
+              </div>
+            </div>
+
+            {/* Seção Conta */}
+            <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
+              <h3 className="font-bold mb-4">Conta</h3>
+              <div className="space-y-3">
+                <button 
+                  onClick={() => setShowChangePassword(!showChangePassword)}
+                  className="w-full px-4 py-3 rounded-xl bg-zinc-800 text-sm font-bold hover:bg-zinc-700 transition-colors text-left flex items-center justify-between"
+                >
+                  Alterar Senha
+                  {showChangePassword ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {showChangePassword && (
+                  <div className="space-y-3 pt-3 border-t border-white/5">
+                    <div>
+                      <label className="text-xs text-zinc-500 mb-1 block">Senha Atual</label>
+                      <input 
+                        type="password" 
+                        className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                        placeholder="Digite sua senha atual"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-500 mb-1 block">Nova Senha</label>
+                      <input 
+                        type="password" 
+                        className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                        placeholder="Digite sua nova senha"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-500 mb-1 block">Confirmar Nova Senha</label>
+                      <input 
+                        type="password" 
+                        className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
+                        placeholder="Confirme sua nova senha"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                      />
+                    </div>
+                    <button className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-sm font-bold hover:opacity-90 transition-all active:scale-95">
+                      Salvar Nova Senha
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : activeTab === 'cursos' ? (
           selectedCourse ? (
             <>
               <header className="h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
@@ -1225,7 +1537,7 @@ export default function TeacherDashboard() {
                         {chatInput.trim() ? (
                           <button 
                             onClick={handleSendMessage}
-                            className="w-10 h-10 md:w-11 md:h-11 bg-gradient-to-r from-[#22c55e] to-[#f97316] rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                            className="w-10 h-10 md:w-11 md:h-11 bg-zinc-700 hover:bg-zinc-600 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
                           >
                             <Send className="w-4 h-4 md:w-5 md:h-5 text-white" />
                           </button>
@@ -1235,7 +1547,7 @@ export default function TeacherDashboard() {
                             className={`w-10 h-10 md:w-11 md:h-11 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all ${
                               isRecording 
                                 ? 'bg-red-500 animate-pulse' 
-                                : 'bg-gradient-to-r from-[#22c55e] to-[#f97316]'
+                                : 'bg-zinc-700 hover:bg-zinc-600'
                             }`}
                           >
                             <Mic className="w-4 h-4 md:w-5 md:h-5 text-white" />
