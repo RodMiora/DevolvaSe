@@ -23,6 +23,7 @@ import {
   Lock,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
   X,
   Loader2,
   Eye,
@@ -113,6 +114,25 @@ export default function TeacherDashboard() {
   const [showAddCourseModal, setShowAddCourseModal] = useState(false);
   const [showEditCourseModal, setShowEditCourseModal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMobileDetailsView, setIsMobileDetailsView] = useState(false);
+
+  // Handlers for mobile navigation
+  const handleSelectStudent = (student: any) => {
+    setSelectedStudent(student);
+    setIsMobileDetailsView(true);
+  };
+
+  const handleSelectCourse = (course: any) => {
+    setSelectedCourse(course);
+    setIsMobileDetailsView(true);
+    fetchCourseVideos(course.id);
+  };
+
+  const handleBackToList = () => {
+    setSelectedStudent(null);
+    setSelectedCourse(null);
+    setIsMobileDetailsView(false);
+  };
   
   // Add Student Form State
   const [fullName, setFullName] = useState("");
@@ -140,27 +160,77 @@ export default function TeacherDashboard() {
   const [moduleDescription, setModuleDescription] = useState("");
   
   // Configurações states
+  const [teacherProfile, setTeacherProfile] = useState<any>(null);
   const [teacherName, setTeacherName] = useState("");
-  const [teacherLogin, setTeacherLogin] = useState("");
+  const [teacherInstruments, setTeacherInstruments] = useState("");
   const [teacherAvatar, setTeacherAvatar] = useState("");
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [theme, setTheme] = useState("dark"); // dark, light, neon
+  const [theme, setTheme] = useState("dark"); // Initialize with default
+  const [themeLoaded, setThemeLoaded] = useState(false); // To track when we get theme from localStorage
   const [savingProfile, setSavingProfile] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  // Load theme from localStorage on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("app_theme") || "dark";
+    setTheme(savedTheme);
+    setThemeLoaded(true);
+  }, []);
+
+  // Apply theme on mount and when theme changes
+  useEffect(() => {
+    if (!themeLoaded) return;
+    localStorage.setItem("app_theme", theme);
+    
+    // Set CSS variables that are actually used in globals.css
+    if (theme === "light") {
+      document.documentElement.style.setProperty('--background', '#ffffff');
+      document.documentElement.style.setProperty('--foreground', '#000000');
+      document.documentElement.style.setProperty('--surface', '#f0f0f0');
+      document.documentElement.style.setProperty('--text-secondary', '#666666');
+    } else if (theme === "neon") {
+      document.documentElement.style.setProperty('--background', '#0a0a0a');
+      document.documentElement.style.setProperty('--foreground', '#ffffff');
+      document.documentElement.style.setProperty('--surface', '#1a1a2e');
+      document.documentElement.style.setProperty('--text-secondary', '#8888ff');
+    } else {
+      // Dark default
+      document.documentElement.style.setProperty('--background', '#0A0A0A');
+      document.documentElement.style.setProperty('--foreground', '#ffffff');
+      document.documentElement.style.setProperty('--surface', '#1A1A1A');
+      document.documentElement.style.setProperty('--text-secondary', '#888888');
+    }
+  }, [theme, themeLoaded]);
 
   useEffect(() => {
     fetchStudents();
     fetchCourses();
     fetchAllModules();
     
-    // Get teacher's ID from auth
-    const getTeacherId = async () => {
+    // Get teacher's ID from auth and fetch profile
+    const getTeacherIdAndProfile = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) setTeacherId(user.id);
+      if (user) {
+        setTeacherId(user.id);
+        // Fetch teacher profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        
+        if (profile) {
+                          setTeacherProfile(profile);
+                          setTeacherName(profile.full_name || "");
+                          setTeacherInstruments(profile.instrument || "");
+                          setTeacherAvatar(profile.avatar_url || "");
+                        }
+      }
     };
-    getTeacherId();
+    getTeacherIdAndProfile();
     
     // Clean up on unmount
     return () => {
@@ -816,6 +886,9 @@ export default function TeacherDashboard() {
               onClick={() => {
                 setActiveTab(item.id as any);
                 setIsMobileMenuOpen(false);
+                setIsMobileDetailsView(false);
+                setSelectedStudent(null);
+                setSelectedCourse(null);
               }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
@@ -834,12 +907,16 @@ export default function TeacherDashboard() {
           <div className="flex items-center gap-3 px-2">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#22c55e] to-[#f97316] p-[2px]">
               <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center overflow-hidden">
-                <img src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100" alt="Avatar" className="w-full h-full object-cover" />
+                <img 
+                  src={teacherAvatar || teacherProfile?.avatar_url || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100"} 
+                  alt="Avatar" 
+                  className="w-full h-full object-cover" 
+                />
               </div>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold truncate">Prof. Rodrigo</p>
-              <p className="text-[0.625rem] text-zinc-500 uppercase tracking-widest font-bold">Guitarra</p>
+              <p className="text-sm font-bold truncate">{teacherName || teacherProfile?.full_name || "Professor"}</p>
+              <p className="text-[0.625rem] text-zinc-500 uppercase tracking-widest font-bold">{teacherInstruments || teacherProfile?.instrument || ""}</p>
             </div>
           </div>
           <button 
@@ -853,7 +930,10 @@ export default function TeacherDashboard() {
       </aside>
 
       {/* COLUNA 2 - Seletor Central */}
-      <section className="w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50">
+      <section className={cn(
+        "w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50",
+        isMobileDetailsView ? "hidden md:flex" : "flex"
+      )}>
         <div className="p-6 space-y-4">
           {/* Botão hambúrguer para mobile */}
           <div className="flex items-center gap-4 md:hidden">
@@ -937,11 +1017,7 @@ export default function TeacherDashboard() {
                 )}
               >
                 <button
-                  onClick={() => {
-                    console.log('Course clicked:', course);
-                    setSelectedCourse(course);
-                    console.log('selectedCourse after set:', course);
-                  }}
+                  onClick={() => handleSelectCourse(course)}
                   className="flex items-center gap-4 flex-1 text-left"
                 >
                   <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center">
@@ -980,7 +1056,7 @@ export default function TeacherDashboard() {
             students.filter(s => s.full_name.toLowerCase().includes(searchQuery.toLowerCase())).map((student) => (
               <button
                 key={student.id}
-                onClick={() => setSelectedStudent(student)}
+                onClick={() => handleSelectStudent(student)}
                 className={cn(
                   "w-full p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 group",
                   selectedStudent?.id === student.id 
@@ -1030,7 +1106,11 @@ export default function TeacherDashboard() {
       </section>
 
       {/* COLUNA 3 - Área de Ação */}
-      <main className="flex-1 flex flex-col bg-black relative">
+      <main className={cn(
+        "flex-1 flex flex-col bg-black relative",
+        (activeTab === 'dashboard' || activeTab === 'config') ? "flex" : 
+        (isMobileDetailsView ? "flex" : "hidden md:flex")
+      )}>
         {activeTab === 'dashboard' ? (
           <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
             {/* Header da Dashboard */}
@@ -1186,30 +1266,60 @@ export default function TeacherDashboard() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-zinc-500 mb-1 block">Nome de Acesso (Login)</label>
-                  <input 
-                    type="text" 
-                    className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
-                    placeholder="Seu login"
-                    value={teacherLogin}
-                    onChange={(e) => setTeacherLogin(e.target.value)}
-                  />
-                </div>
-
-                <div>
                   <label className="text-xs text-zinc-500 mb-1 block">Instrumentos que Ensina</label>
                   <input 
                     type="text" 
                     className="w-full px-4 py-3 rounded-xl bg-zinc-800 border border-white/5 text-sm focus:outline-none focus:border-[#22c55e]/50"
                     placeholder="Ex: Guitarra, Piano"
+                    value={teacherInstruments}
+                    onChange={(e) => setTeacherInstruments(e.target.value)}
                   />
                 </div>
 
                 <button 
                   disabled={savingProfile}
-                  onClick={() => {
+                  onClick={async () => {
+                    if (!teacherId) return;
                     setSavingProfile(true);
-                    setTimeout(() => setSavingProfile(false), 1500);
+                    
+                    try {
+                      console.log('Attempting to update profile with:', {
+                        teacherId,
+                        full_name: teacherName,
+                        instrument: teacherInstruments,
+                        avatar_url: teacherAvatar
+                      });
+                      
+                      // Update profile in Supabase
+                      const { data, error } = await supabase
+                        .from('profiles')
+                        .update({
+                          full_name: teacherName,
+                          instrument: teacherInstruments,
+                          avatar_url: teacherAvatar
+                        })
+                        .eq('id', teacherId)
+                        .select();
+                      
+                      console.log('Supabase update response:', { data, error });
+                      
+                      if (error) throw error;
+                      
+                      // Update local profile state
+                      setTeacherProfile((prev: any) => ({
+                        ...prev,
+                        full_name: teacherName,
+                        instrument: teacherInstruments,
+                        avatar_url: teacherAvatar
+                      }));
+                      
+                      alert("Perfil atualizado com sucesso!");
+                    } catch (err) {
+                      console.error('Erro ao salvar perfil:', err);
+                      alert(`Erro ao salvar perfil: ${(err as Error)?.message || JSON.stringify(err)}`);
+                    } finally {
+                      setSavingProfile(false);
+                    }
                   }}
                   className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-sm font-bold hover:opacity-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -1307,8 +1417,43 @@ export default function TeacherDashboard() {
                         onChange={(e) => setConfirmPassword(e.target.value)}
                       />
                     </div>
-                    <button className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-sm font-bold hover:opacity-90 transition-all active:scale-95">
-                      Salvar Nova Senha
+                    <button 
+                      disabled={changingPassword}
+                      onClick={async () => {
+                        if (newPassword !== confirmPassword) {
+                          alert("As senhas não conferem!");
+                          return;
+                        }
+                        if (!newPassword) {
+                          alert("Digite uma nova senha!");
+                          return;
+                        }
+                        
+                        setChangingPassword(true);
+                        
+                        try {
+                          // Update password in Supabase Auth
+                          const { error } = await supabase.auth.updateUser({
+                            password: newPassword
+                          });
+                          
+                          if (error) throw error;
+                          
+                          alert("Senha alterada com sucesso!");
+                          setCurrentPassword("");
+                          setNewPassword("");
+                          setConfirmPassword("");
+                          setShowChangePassword(false);
+                        } catch (err) {
+                          console.error('Erro ao alterar senha:', err);
+                          alert("Erro ao alterar senha! Verifique a senha atual e tente novamente.");
+                        } finally {
+                          setChangingPassword(false);
+                        }
+                      }}
+                      className="w-full px-4 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-sm font-bold hover:opacity-90 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {changingPassword ? "Alterando..." : "Salvar Nova Senha"}
                     </button>
                   </div>
                 )}
@@ -1318,8 +1463,14 @@ export default function TeacherDashboard() {
         ) : activeTab === 'cursos' ? (
           selectedCourse ? (
             <>
-              <header className="h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
-                <div className="flex items-center gap-6">
+              <header className="h-auto min-h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 py-4 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={handleBackToList}
+                    className="md:hidden p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
                   <h2 className="text-xl font-bold">Gerenciar Curso: <span className="text-zinc-500">{selectedCourse.name}</span></h2>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1396,19 +1547,26 @@ export default function TeacherDashboard() {
           <>
             {/* Header Global */}
             <header className="h-auto min-h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 py-4 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
-              <div className="flex flex-col md:flex-row md:items-center gap-4">
-                <h2 className="text-xl font-bold">Alunos <span className="text-zinc-500">({selectedStudent.instrument})</span></h2>
-                <div className="flex flex-wrap gap-3">
-                  <div className="px-3 py-1.5 rounded-full bg-[#22c55e]/10 border border-[#22c55e]/20 flex items-center gap-2">
-                    <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-                    <span className="text-[0.6875rem] font-bold text-[#22c55e]">Alunos Ativos: 48</span>
-                  </div>
-                  <div className="px-3 py-1.5 rounded-full bg-[#f97316]/10 border border-[#f97316]/20 flex items-center gap-2">
-                    <MessageCircle className="w-3.5 h-3.5 text-[#f97316]" />
-                    <span className="text-[0.6875rem] font-bold text-[#f97316]">Treinos Pendentes: 7</span>
+              <div className="flex flex-col md:flex-row md:items-center justify-between w-full gap-4">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={handleBackToList}
+                    className="md:hidden p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <h2 className="text-xl font-bold">Alunos <span className="text-zinc-500">({selectedStudent.instrument})</span></h2>
+                  <div className="flex flex-wrap gap-3">
+                    <div className="px-3 py-1.5 rounded-full bg-[#22c55e]/10 border border-[#22c55e]/20 flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-[#22c55e]" />
+                      <span className="text-[0.6875rem] font-bold text-[#22c55e]">Alunos Ativos: 48</span>
+                    </div>
+                    <div className="px-3 py-1.5 rounded-full bg-[#f97316]/10 border border-[#f97316]/20 flex items-center gap-2">
+                      <MessageCircle className="w-3.5 h-3.5 text-[#f97316]" />
+                      <span className="text-[0.6875rem] font-bold text-[#f97316]">Treinos Pendentes: 7</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
               <div className="flex items-center bg-zinc-900 rounded-xl p-1 border border-white/5">
                 <button 
@@ -1429,6 +1587,7 @@ export default function TeacherDashboard() {
                 >
                   Gerenciar Aulas
                 </button>
+              </div>
               </div>
             </header>
 

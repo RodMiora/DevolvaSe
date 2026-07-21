@@ -45,8 +45,8 @@ body {
 /* Custom inputs styling */
 input {
   background: var(--surface);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  color: white;
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  color: var(--foreground);
   transition: all 0.2s;
 }
 

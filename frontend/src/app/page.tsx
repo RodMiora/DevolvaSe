@@ -14,6 +14,40 @@ export default function Home() {
   const [profile, setProfile] = useState<any>(null);
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [theme, setTheme] = useState("dark"); // Initialize with default
+  const [themeLoaded, setThemeLoaded] = useState(false); // To track when we get theme from localStorage
+
+  // Load theme from localStorage on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("app_theme") || "dark";
+    setTheme(savedTheme);
+    setThemeLoaded(true);
+  }, []);
+
+  // Apply theme on mount and when theme changes (applies to both teacher and student)
+  useEffect(() => {
+    if (!themeLoaded) return; // Don't apply until we have the saved theme
+    localStorage.setItem("app_theme", theme);
+    
+    // Set CSS variables that are actually used in globals.css
+    if (theme === "light") {
+      document.documentElement.style.setProperty('--background', '#ffffff');
+      document.documentElement.style.setProperty('--foreground', '#000000');
+      document.documentElement.style.setProperty('--surface', '#f0f0f0');
+      document.documentElement.style.setProperty('--text-secondary', '#666666');
+    } else if (theme === "neon") {
+      document.documentElement.style.setProperty('--background', '#0a0a0a');
+      document.documentElement.style.setProperty('--foreground', '#ffffff');
+      document.documentElement.style.setProperty('--surface', '#1a1a2e');
+      document.documentElement.style.setProperty('--text-secondary', '#8888ff');
+    } else {
+      // Dark default
+      document.documentElement.style.setProperty('--background', '#0A0A0A');
+      document.documentElement.style.setProperty('--foreground', '#ffffff');
+      document.documentElement.style.setProperty('--surface', '#1A1A1A');
+      document.documentElement.style.setProperty('--text-secondary', '#888888');
+    }
+  }, [theme, themeLoaded]);
 
   const fetchTeacherId = async () => {
     const { data, error } = await supabase
