@@ -28,7 +28,8 @@ import {
   Eye,
   EyeOff,
   Pencil,
-  Trash2
+  Trash2,
+  Menu
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -111,6 +112,7 @@ export default function TeacherDashboard() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showAddCourseModal, setShowAddCourseModal] = useState(false);
   const [showEditCourseModal, setShowEditCourseModal] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // Add Student Form State
   const [fullName, setFullName] = useState("");
@@ -761,15 +763,34 @@ export default function TeacherDashboard() {
 
   return (
     <div className="flex h-screen bg-[#0A0A0A] text-white overflow-hidden font-sans">
+      {/* Overlay para menu mobile */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+      
       {/* COLUNA 1 - Menu Lateral */}
-      <aside className="w-64 border-r border-white/5 flex flex-col bg-[#0d0d0d]">
-        <div className="p-6 flex items-center gap-3">
-          <div className="flex items-end gap-[2px] h-6">
-            {[0.4, 0.7, 1, 0.6, 0.8].map((h, i) => (
-              <div key={i} className="w-1 bg-gradient-to-t from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-full" style={{ height: `${h * 100}%` }} />
-            ))}
+      <aside className={cn(
+        "fixed md:relative z-50 w-64 h-full border-r border-white/5 flex flex-col bg-[#0d0d0d] transition-transform duration-300",
+        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      )}>
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex items-end gap-[2px] h-6">
+              {[0.4, 0.7, 1, 0.6, 0.8].map((h, i) => (
+                <div key={i} className="w-1 bg-gradient-to-t from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-full" style={{ height: `${h * 100}%` }} />
+              ))}
+            </div>
+            <span className="text-xl font-bold tracking-tight">DevolvaSe</span>
           </div>
-          <span className="text-xl font-bold tracking-tight">DevolvaSe</span>
+          <button
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="md:hidden p-2 text-zinc-500 hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <nav className="flex-1 px-4 space-y-2 mt-4">
@@ -781,7 +802,10 @@ export default function TeacherDashboard() {
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
+              onClick={() => {
+                setActiveTab(item.id as any);
+                setIsMobileMenuOpen(false);
+              }}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
                 activeTab === item.id 
@@ -818,8 +842,26 @@ export default function TeacherDashboard() {
       </aside>
 
       {/* COLUNA 2 - Seletor Central */}
-      <section className="w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50">
+      <section className="w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50">
         <div className="p-6 space-y-4">
+          {/* Botão hambúrguer para mobile */}
+          <div className="flex items-center gap-4 md:hidden">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-end gap-[2px] h-6">
+                {[0.4, 0.7, 1, 0.6, 0.8].map((h, i) => (
+                  <div key={i} className="w-1 bg-gradient-to-t from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-full" style={{ height: `${h * 100}%` }} />
+                ))}
+              </div>
+              <span className="text-xl font-bold tracking-tight">DevolvaSe</span>
+            </div>
+          </div>
+          
           {activeTab === 'cursos' ? (
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
@@ -964,32 +1006,32 @@ export default function TeacherDashboard() {
         {activeTab === 'cursos' ? (
           selectedCourse ? (
             <>
-              <header className="h-20 border-b border-white/5 flex items-center justify-between px-8 bg-[#0d0d0d]/30 backdrop-blur-md">
+              <header className="h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
                 <div className="flex items-center gap-6">
                   <h2 className="text-xl font-bold">Gerenciar Curso: <span className="text-zinc-500">{selectedCourse.name}</span></h2>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => {
                       setSelectedCourseForModule(selectedCourse?.id || null);
                       setShowAddModuleModal(true);
                     }}
-                    className="px-6 py-3 rounded-xl bg-zinc-800 text-white font-bold text-sm hover:bg-zinc-700 transition-colors flex items-center gap-2"
+                    className="px-4 md:px-6 py-2 md:py-3 rounded-xl bg-zinc-800 text-white font-bold text-sm hover:bg-zinc-700 transition-colors flex items-center gap-2"
                   >
                     <Plus className="w-4 h-4" />
                     Adicionar Módulo
                   </button>
                   <button 
                     onClick={() => setShowUploadModal(true)}
-                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm shadow-lg shadow-green-500/10 active:scale-[0.98] transition-all flex items-center gap-2"
+                    className="px-4 md:px-6 py-2 md:py-3 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm shadow-lg shadow-green-500/10 active:scale-[0.98] transition-all flex items-center gap-2"
                   >
-                    <Plus className="w-5 h-5" />
+                    <Plus className="w-4 h-4 md:w-5 md:h-5" />
                     Upload de Novo Vídeo
                   </button>
                 </div>
               </header>
               
-              <div className="flex-1 overflow-y-auto p-8 grid grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="flex-1 overflow-y-auto p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                 {courseVideos.map((video) => (
                   <div key={video.id} className="bg-zinc-900/40 rounded-3xl border border-white/5 overflow-hidden group hover:border-[#22c55e]/30 transition-all">
                     <div className="relative aspect-video bg-black/40">
@@ -1041,10 +1083,10 @@ export default function TeacherDashboard() {
         ) : selectedStudent ? (
           <>
             {/* Header Global */}
-            <header className="h-20 border-b border-white/5 flex items-center justify-between px-8 bg-[#0d0d0d]/30 backdrop-blur-md">
-              <div className="flex items-center gap-6">
+            <header className="h-auto min-h-20 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 py-4 bg-[#0d0d0d]/30 backdrop-blur-md gap-4">
+              <div className="flex flex-col md:flex-row md:items-center gap-4">
                 <h2 className="text-xl font-bold">Alunos <span className="text-zinc-500">({selectedStudent.instrument})</span></h2>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3">
                   <div className="px-3 py-1.5 rounded-full bg-[#22c55e]/10 border border-[#22c55e]/20 flex items-center gap-2">
                     <Users className="w-3.5 h-3.5 text-[#22c55e]" />
                     <span className="text-[0.6875rem] font-bold text-[#22c55e]">Alunos Ativos: 48</span>
@@ -1060,7 +1102,7 @@ export default function TeacherDashboard() {
                 <button 
                   onClick={() => setViewMode('chat')}
                   className={cn(
-                    "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                    "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
                     viewMode === 'chat' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
                   )}
                 >
@@ -1069,7 +1111,7 @@ export default function TeacherDashboard() {
                 <button 
                   onClick={() => setViewMode('lessons')}
                   className={cn(
-                    "px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                    "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
                     viewMode === 'lessons' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
                   )}
                 >
@@ -1089,7 +1131,7 @@ export default function TeacherDashboard() {
                     <span className="font-bold text-sm">{selectedStudent.full_name}</span>
                   </div>
                   
-                  <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
+                  <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
                     {messages.map((msg) => {
                       console.log('Renderizando mensagem:', msg);
                       const isMe = msg.sender_id === teacherId;
@@ -1097,7 +1139,7 @@ export default function TeacherDashboard() {
                       return (
                         <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
                           <div className={cn(
-                            "max-w-[70%] px-4 py-3 rounded-2xl relative",
+                            "max-w-[85%] md:max-w-[70%] px-4 py-3 rounded-2xl relative",
                             isMe 
                               ? "bg-zinc-700 text-white rounded-tr-none" 
                               : "bg-zinc-800 border border-zinc-700 text-white rounded-tl-none"
@@ -1140,7 +1182,7 @@ export default function TeacherDashboard() {
                   </div>
 
                   {/* Input Bar */}
-                  <div className="p-6 bg-gradient-to-t from-black to-transparent relative">
+                  <div className="p-4 md:p-6 bg-gradient-to-t from-black to-transparent relative">
                     <div className="relative max-w-4xl mx-auto">
                       <div className="absolute -inset-[1px] bg-gradient-to-r from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-2xl opacity-20 blur-sm" />
                       <div className="relative flex items-center gap-2 bg-zinc-900/90 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl">
@@ -1155,9 +1197,9 @@ export default function TeacherDashboard() {
                         
                         <button 
                           onClick={() => document.getElementById('file-upload')?.click()}
-                          className="p-3 text-zinc-400 hover:text-white transition-colors"
+                          className="p-2 md:p-3 text-zinc-400 hover:text-white transition-colors"
                         >
-                          <Paperclip className="w-5 h-5" />
+                          <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
                         </button>
                         
                         <input 
@@ -1176,28 +1218,28 @@ export default function TeacherDashboard() {
                         
                         <button 
                           onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                          className="p-3 text-zinc-400 hover:text-white transition-colors relative"
+                          className="p-2 md:p-3 text-zinc-400 hover:text-white transition-colors relative"
                         >
-                          <Smile className="w-5 h-5" />
+                          <Smile className="w-4 h-4 md:w-5 md:h-5" />
                         </button>
                         
                         {chatInput.trim() ? (
                           <button 
                             onClick={handleSendMessage}
-                            className="w-11 h-11 bg-gradient-to-r from-[#22c55e] to-[#f97316] rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                            className="w-10 h-10 md:w-11 md:h-11 bg-gradient-to-r from-[#22c55e] to-[#f97316] rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
                           >
-                            <Send className="w-5 h-5 text-white" />
+                            <Send className="w-4 h-4 md:w-5 md:h-5 text-white" />
                           </button>
                         ) : (
                           <button 
                             onClick={isRecording ? stopRecording : startRecording}
-                            className={`w-11 h-11 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all ${
+                            className={`w-10 h-10 md:w-11 md:h-11 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all ${
                               isRecording 
                                 ? 'bg-red-500 animate-pulse' 
                                 : 'bg-gradient-to-r from-[#22c55e] to-[#f97316]'
                             }`}
                           >
-                            <Mic className="w-5 h-5 text-white" />
+                            <Mic className="w-4 h-4 md:w-5 md:h-5 text-white" />
                           </button>
                         )}
                       </div>
@@ -1229,7 +1271,7 @@ export default function TeacherDashboard() {
               {/* Lessons Management View */}
               {viewMode === 'lessons' && (
                 <div className="flex-1 flex flex-col bg-[#050505]">
-                  <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#0d0d0d]/20">
+                  <div className="p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-[#0d0d0d]/20">
                     <div className="flex items-center gap-3">
                       <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
                       <h3 className="font-bold text-sm">Gerenciando Aulas: {selectedStudent.full_name} ({selectedStudent.instrument})</h3>
@@ -1242,12 +1284,12 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                  <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4 md:space-y-6">
                     {modules.map((module) => (
                       <div key={module.id} className="rounded-2xl border border-white/5 bg-zinc-900/20 overflow-hidden">
                         <button 
                           onClick={() => setOpenModules(prev => prev.includes(module.id) ? prev.filter(id => id !== module.id) : [...prev, module.id])}
-                          className="w-full p-5 flex items-center justify-between hover:bg-white/5 transition-colors"
+                          className="w-full p-4 md:p-5 flex items-center justify-between hover:bg-white/5 transition-colors"
                         >
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
@@ -1259,15 +1301,15 @@ export default function TeacherDashboard() {
                         </button>
 
                         {openModules.includes(module.id) && (
-                          <div className="px-5 pb-5 grid grid-cols-1 gap-3">
+                          <div className="px-4 md:px-5 pb-4 md:pb-5 grid grid-cols-1 gap-3">
                             {(module.lessons || []).map((lesson) => (
                               <div key={lesson.id} className={cn(
-                                "flex items-center justify-between p-4 rounded-xl border transition-all",
+                                "flex flex-col md:flex-row items-start md:items-center justify-between p-4 rounded-xl border transition-all gap-4",
                                 lesson.is_locked ? "bg-black/40 border-white/5" : "bg-[#22c55e]/5 border-[#22c55e]/20"
                               )}>
                                 <div className="flex items-center gap-4">
-                                  <div className="w-12 h-12 rounded-lg bg-black/40 flex items-center justify-center overflow-hidden relative">
-                                    <Video className="w-5 h-5 text-zinc-600" />
+                                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg bg-black/40 flex items-center justify-center overflow-hidden relative">
+                                    <Video className="w-4 h-4 md:w-5 md:h-5 text-zinc-600" />
                                     <div className="absolute inset-0 bg-black/20" />
                                   </div>
                                   <div>
