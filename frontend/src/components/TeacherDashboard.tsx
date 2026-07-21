@@ -1184,7 +1184,6 @@ export default function TeacherDashboard() {
                   {/* Input Bar */}
                   <div className="p-4 md:p-6 bg-gradient-to-t from-black to-transparent relative">
                     <div className="relative max-w-4xl mx-auto">
-                      <div className="absolute -inset-[1px] bg-gradient-to-r from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-2xl opacity-20 blur-sm" />
                       <div className="relative flex items-center gap-2 bg-zinc-900/90 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl">
                         {/* Hidden file input */}
                         <input 
