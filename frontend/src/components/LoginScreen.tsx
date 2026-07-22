@@ -71,19 +71,20 @@ export default function LoginScreen() {
               <p className="text-red-500 text-xs text-center font-medium px-2">{error}</p>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-[60%] mx-auto h-[52px] rounded-xl font-bold text-white transition-all active:scale-[0.95] mt-4 flex items-center justify-center"
-              style={{
-                background: "var(--vu-gradient)",
-              }}
-            >
-              {loading ? (
-                <Loader2 className="animate-spin" size={20} />
-              ) : (
-                <span className="text-xl md:text-2xl pulse-glow">
-                  TOCAR
+           <button
+  type="submit"
+  disabled={loading}
+  className="w-[60%] mx-auto h-[52px] rounded-xl font-bold text-white transition-all active:scale-[0.95] mt-4 flex items-center justify-center"
+  style={{
+    background: "var(--vu-gradient)",
+    boxShadow: "0 0 25px rgba(255, 120, 0, 0.6)",
+  }}
+>
+  {loading ? (
+    <Loader2 className="animate-spin" size={20} />
+  ) : (
+    <span className="text-xl md:text-2xl pulse-glow">
+      TOCAR
                 </span>
               )}
             </button>
