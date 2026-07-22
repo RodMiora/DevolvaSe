@@ -79,7 +79,13 @@ export default function LoginScreen() {
                 background: "var(--vu-gradient)",
               }}
             >
-              {loading ? <Loader2 className="animate-spin" size={20} /> : "TOCAR"}
+              {loading ? (
+                <Loader2 className="animate-spin" size={20} />
+              ) : (
+                <span className="text-xl md:text-2xl pulse-glow">
+                  TOCAR
+                </span>
+              )}
             </button>
           </form>
         </div>
