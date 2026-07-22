@@ -74,7 +74,7 @@ export default function LoginScreen() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-[52px] rounded-xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center"
+              className="w-[60%] mx-auto h-[52px] rounded-xl font-bold text-white transition-all active:scale-[0.95] mt-4 flex items-center justify-center"
               style={{
                 background: "var(--vu-gradient)",
               }}
