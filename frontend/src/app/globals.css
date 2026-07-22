@@ -52,8 +52,8 @@ body {
   }
   50% {
     /* Estado de brilho máximo e intenso (super bright) */
-    opacity: 10;
-    text-shadow: 0 0 10px #fff, 0 0 30px #fff, 0 0 60px #fff, 0 0 90px #ff9900, 0 0 120px #ff4400;
+    opacity: 1;
+    text-shadow: 0 0 90px #fff, 0 0 190px #fff, 0 0 150px #fff, 0 0 150px #ff9900, 0 0 90px #ff4400;
   }
 }
 
