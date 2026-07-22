@@ -932,7 +932,7 @@ export default function TeacherDashboard() {
       {/* COLUNA 2 - Seletor Central */}
       <section className={cn(
         "w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50",
-        isMobileDetailsView ? "hidden md:flex" : "flex"
+        (isMobileDetailsView || activeTab === 'dashboard' || activeTab === 'config') ? "hidden md:flex" : "flex"
       )}>
         <div className="p-6 space-y-4">
           {/* Botão hambúrguer para mobile */}
@@ -1113,9 +1113,17 @@ export default function TeacherDashboard() {
       )}>
         {activeTab === 'dashboard' ? (
           <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-            {/* Header da Dashboard */}
+            {/* Header da Dashboard com hambúrguer no mobile */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
+              <div className="flex items-center gap-4 md:hidden w-full">
+                <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1">
                 <h2 className="text-2xl font-bold">Dashboard</h2>
                 <p className="text-sm text-zinc-500 mt-1">Resumo geral do seu ensino</p>
               </div>
@@ -1215,10 +1223,20 @@ export default function TeacherDashboard() {
           </div>
         ) : activeTab === 'config' ? (
           <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-            {/* Header das Configurações */}
-            <div>
-              <h2 className="text-2xl font-bold">Configurações</h2>
-              <p className="text-sm text-zinc-500 mt-1">Ajuste o seu perfil e preferências</p>
+            {/* Header das Configurações com hambúrguer no mobile */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-4 md:hidden w-full">
+                <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1">
+                <h2 className="text-2xl font-bold">Configurações</h2>
+                <p className="text-sm text-zinc-500 mt-1">Ajuste o seu perfil e preferências</p>
+              </div>
             </div>
 
             {/* Seção Perfil */}
