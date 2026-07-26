@@ -38,7 +38,8 @@ interface Student {
   id: string;
   full_name: string;
   avatar_url?: string;
-  instrument: string;
+  instruments: string[];
+  phone?: string | null;
   unread_count: number;
   progress: number; // 0 to 100
 }
@@ -68,7 +69,14 @@ interface Lesson {
   id: string;
   title: string;
   is_locked: boolean;
+  is_completed?: boolean;
+  status?: 'locked' | 'unlocked' | 'pending_review' | 'approved';
   video_url?: string;
+  description?: string;
+  exercise_video_url?: string | null;
+  exercise_thumbnail_url?: string | null;
+  exercise_id?: string | null;
+  has_exercise?: boolean;
 }
 
 interface Course {
@@ -115,6 +123,33 @@ export default function TeacherDashboard() {
   const [showEditCourseModal, setShowEditCourseModal] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileDetailsView, setIsMobileDetailsView] = useState(false);
+  const [selectedLessonForModal, setSelectedLessonForModal] = useState<Lesson | null>(null);
+  const [showEditLessonModal, setShowEditLessonModal] = useState(false);
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
+  const [editLessonTitle, setEditLessonTitle] = useState("");
+  const [editLessonDescription, setEditLessonDescription] = useState("");
+  const [deletingLesson, setDeletingLesson] = useState(false);
+  const [openDropdownLessonId, setOpenDropdownLessonId] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [showStudentExerciseModal, setShowStudentExerciseModal] = useState(false);
+  const [selectedLessonForExercise, setSelectedLessonForExercise] = useState<Lesson | null>(null);
+  const [studentExerciseFeedback, setStudentExerciseFeedback] = useState("");
+  const [sendingFeedback, setSendingFeedback] = useState(false);
+  const [approvingLesson, setApprovingLesson] = useState(false);
+  const exerciseTeacherVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Fecha o dropdown ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setOpenDropdownLessonId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   // Handlers for mobile navigation
   const handleSelectStudent = (student: any) => {
@@ -138,8 +173,19 @@ export default function TeacherDashboard() {
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [instrument, setInstrument] = useState("Guitarra");
+  const [selectedInstruments, setSelectedInstruments] = useState<string[]>([]);
+  const [phone, setPhone] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
+  // Edit Student State
+  const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<any>(null);
+  const [editStudentName, setEditStudentName] = useState("");
+  const [editSelectedInstruments, setEditSelectedInstruments] = useState<string[]>([]);
+  const [editStudentPhone, setEditStudentPhone] = useState("");
+
+  // Student Lessons View State
+  const [selectedStudentInstrument, setSelectedStudentInstrument] = useState<string | null>(null);
   
   // Upload Video Form State
   const [videoTitle, setVideoTitle] = useState("");
@@ -147,6 +193,7 @@ export default function TeacherDashboard() {
   const [selectedModule, setSelectedModule] = useState("");
   const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [courseModules, setCourseModules] = useState<Module[]>([]);
 
   // Add/Edit Course Form State
@@ -279,12 +326,21 @@ export default function TeacherDashboard() {
   };
 
   const fetchCourseVideos = async (courseId: string) => {
-    // Mocking videos for now
-    const mockVideos: CourseVideo[] = [
-      { id: 'v1', title: 'Lesson 1: Postura', module: 'Módulo 1', thumbnail: 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400', views: 124, exercises_count: 48 },
-      { id: 'v2', title: 'Lesson 2: Acordes', module: 'Módulo 1', thumbnail: 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400', views: 98, exercises_count: 32 },
-    ];
-    setCourseVideos(mockVideos);
+    // Use real data from courseModules
+    const videos: CourseVideo[] = [];
+    courseModules.forEach(module => {
+      (module.lessons || []).forEach(lesson => {
+        videos.push({
+          id: lesson.id,
+          title: lesson.title,
+          module: module.title,
+          thumbnail: 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400', // Placeholder thumbnail
+          views: 0,
+          exercises_count: 0
+        });
+      });
+    });
+    setCourseVideos(videos);
   };
 
   useEffect(() => {
@@ -299,11 +355,13 @@ export default function TeacherDashboard() {
     try {
       const { data, error } = await supabase
         .from('modules')
-        .select('*')
+        .select('*, lessons(*)')
         .eq('instrument_id', courseId)
         .order('order', { ascending: true });
       
       if (error) throw error;
+      
+      console.log('fetchCourseModules data:', data);
       
       setCourseModules((data || []).map((m: any) => ({ 
         id: m.id, 
@@ -311,7 +369,7 @@ export default function TeacherDashboard() {
         description: m.description, 
         instrument_id: m.instrument_id, 
         order: m.order, 
-        lessons: [] 
+        lessons: m.lessons || [] 
       })));
     } catch (error) {
       console.error('Error fetching modules:', error);
@@ -324,7 +382,19 @@ export default function TeacherDashboard() {
       const studentUserId = selectedStudent.id;
       console.log("Calling fetchMessages for student:", studentUserId);
       fetchMessages(studentUserId);
-      fetchStudentLessons(selectedStudent.id, selectedStudent.instrument);
+      
+      // Set default instrument if not set
+      if (!selectedStudentInstrument || !selectedStudent.instruments.includes(selectedStudentInstrument)) {
+        setSelectedStudentInstrument(selectedStudent.instruments[0]);
+      }
+      
+      // Find the course corresponding to the student's selected instrument
+      const courseToSelect = courses.find(
+        (course) => (course?.name || '').toLowerCase() === (selectedStudentInstrument || '').toLowerCase()
+      );
+      if (courseToSelect) {
+        setSelectedCourse(courseToSelect);
+      }
       
       // Clean up previous channel if it exists
       if (messagesChannelRef.current) {
@@ -359,7 +429,21 @@ export default function TeacherDashboard() {
         }
       };
     }
-  }, [selectedStudent, courses, teacherId]);
+  }, [selectedStudent, courses, teacherId, selectedStudentInstrument]);
+
+  // Fetch lessons when selectedStudentInstrument changes
+  useEffect(() => {
+    if (selectedStudent && selectedStudentInstrument && teacherId) {
+      fetchStudentLessons(selectedStudent.id, selectedStudentInstrument);
+      // Also update selectedCourse when instrument changes
+      const courseToSelect = courses.find(
+        (course) => (course?.name || '').toLowerCase() === (selectedStudentInstrument || '').toLowerCase()
+      );
+      if (courseToSelect) {
+        setSelectedCourse(courseToSelect);
+      }
+    }
+  }, [selectedStudentInstrument, selectedStudent, teacherId, courses]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -368,6 +452,54 @@ export default function TeacherDashboard() {
       scrollRef.current.scrollTo(0, scrollRef.current.scrollHeight);
     }
   }, [messages]);
+
+  // Helper: Extrai URLs de video do conteudo de texto
+  const extractVideoUrlsFromText = (text: string): string[] => {
+    if (!text) return [];
+    const urlRegex = /https?:\/\/[^\s<>"'`]+/g;
+    const matches = text.match(urlRegex) || [];
+    return matches.filter(url => {
+      const lower = url.toLowerCase();
+      // Extensoes de video + provedores conhecidos
+      if (/\.(mp4|webm|mov|avi|mkv|m4v|ogg|ogv)(\?|$)/i.test(url)) return true;
+      if (lower.includes('r2.dev')) return true;
+      if (lower.includes('cloudflare')) return true;
+      return false;
+    });
+  };
+
+  // Helper: Renderiza texto preservando quebras de linha e removendo a URL duplicada (ja sera exibida como player)
+  const renderTextContentWithVideo = (content: string) => {
+    const videoUrls = extractVideoUrlsFromText(content);
+    if (videoUrls.length === 0) {
+      return <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>;
+    }
+    // Remove as URLs de video do texto para nao duplicar
+    let displayText = content;
+    videoUrls.forEach(url => {
+      displayText = displayText.replace(url, '');
+    });
+    // Limpa espacos extras e quebras repetidas
+    displayText = displayText.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    
+    return (
+      <div className="flex flex-col gap-2 min-w-[14rem]">
+        {displayText && (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{displayText}</p>
+        )}
+        {videoUrls.map((url, idx) => (
+          <video
+            key={`${url}-${idx}`}
+            src={url}
+            controls
+            preload="metadata"
+            className="w-[320px] max-w-full h-auto max-h-56 rounded-lg bg-black/30 mt-1.5 border border-white/5 object-contain"
+            playsInline
+          />
+        ))}
+      </div>
+    );
+  };
 
   const fetchStudents = async () => {
     const { data, error } = await supabase
@@ -379,7 +511,7 @@ export default function TeacherDashboard() {
       // Mocking unread and progress for now, will integrate later
       const studentsWithData = data.map(s => ({
         ...s,
-        instrument: s.instrument || 'Guitarra',
+        instruments: s.instruments || ((s.instrument || '') ? [s.instrument] : ['Guitarra']),
         unread_count: Math.floor(Math.random() * 5),
         progress: Math.floor(Math.random() * 100)
       }));
@@ -590,6 +722,11 @@ export default function TeacherDashboard() {
       .select('*')
       .eq('student_id', studentId);
 
+    const { data: exercisesData } = await supabase
+      .from('exercises')
+      .select('*')
+      .eq('student_id', studentId);
+
     if (modulesData) {
       const formattedModules = modulesData.map(mod => ({
         id: mod.id,
@@ -599,11 +736,31 @@ export default function TeacherDashboard() {
         order: mod.order,
         lessons: (mod.lessons || []).map((lesson: any) => {
           const access = (accessData || []).find(a => a.lesson_id === lesson.id);
+          const exercise = (exercisesData || []).find(e => e.lesson_id === lesson.id);
+          
+          // Resolve status: priority explicit DB status, fallback backward compat
+          let status: Lesson['status'] = 'locked';
+          if (access?.status && ['locked','unlocked','pending_review','approved'].includes(String(access.status))) {
+            status = access.status;
+          } else {
+            if (access?.is_completed) status = 'approved';
+            else if (exercise) status = 'pending_review';
+            else if (access && !access.is_locked) status = 'unlocked';
+            else status = 'locked';
+          }
+          
           return {
             id: lesson.id,
             title: lesson.title,
             is_locked: access ? access.is_locked : true,
-            video_url: lesson.video_url
+            is_completed: access?.is_completed || false,
+            status,
+            video_url: lesson.video_url,
+            description: lesson.description,
+            exercise_video_url: exercise?.video_url || null,
+            exercise_thumbnail_url: exercise?.thumbnail_url || null,
+            exercise_id: exercise?.id || null,
+            has_exercise: !!exercise
           };
         })
       }));
@@ -615,17 +772,173 @@ export default function TeacherDashboard() {
   const toggleLessonLock = async (lessonId: string, currentLocked: boolean) => {
     if (!selectedStudent) return;
 
-    const { error } = await supabase
-      .from('student_lessons')
-      .update({ is_locked: !currentLocked })
-      .eq('student_id', selectedStudent.id)
-      .eq('lesson_id', lessonId);
+    try {
+      const response = await fetch('http://localhost:8000/admin/toggle-lesson-lock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: selectedStudent.id,
+          lesson_id: lessonId,
+          unlocked: currentLocked
+        })
+      });
 
-    if (!error) {
-      setModules(prev => prev.map(mod => ({
-        ...mod,
-        lessons: (mod.lessons || []).map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked } : l)
-      })));
+      if (response.ok) {
+        const newStatus = currentLocked ? 'unlocked' : 'locked';
+        setModules(prev => prev.map(mod => ({
+          ...mod,
+          lessons: (mod.lessons || []).map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked, is_completed: false, status: newStatus } : l)
+        })));
+      } else {
+        throw new Error('Falha ao alterar estado da aula');
+      }
+    } catch (error) {
+      console.error('Erro ao alterar estado da aula:', error);
+      alert('Erro ao alterar estado da aula');
+    }
+  };
+
+  const approveLesson = async (lesson: Lesson) => {
+    if (!selectedStudent) return;
+    setApprovingLesson(true);
+    try {
+      const response = await fetch('http://localhost:8000/admin/approve-lesson', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: selectedStudent.id,
+          lesson_id: lesson.id
+        })
+      });
+
+      if (response.ok) {
+        setModules(prev => prev.map(mod => ({
+          ...mod,
+          lessons: (mod.lessons || []).map(l => l.id === lesson.id ? { ...l, is_locked: false, is_completed: true, status: 'approved' } : l)
+        })));
+        if (selectedLessonForExercise?.id === lesson.id) {
+          setSelectedLessonForExercise(prev => prev ? { ...prev, is_locked: false, is_completed: true, status: 'approved' } : null);
+        }
+      } else {
+        throw new Error('Falha ao aprovar aula');
+      }
+    } catch (err) {
+      console.error('Erro ao aprovar aula:', err);
+      alert('Erro ao aprovar aula');
+    } finally {
+      setApprovingLesson(false);
+    }
+  };
+
+  const sendLessonFeedback = async (lesson: Lesson) => {
+    if (!selectedStudent || !teacherId) return;
+    const text = studentExerciseFeedback.trim();
+    if (!text) {
+      alert('Digite um comentario para o feedback');
+      return;
+    }
+    // Encontra o modulo ao qual esta aula pertence
+    const parentModule = modules.find(mod => (mod.lessons || []).some(l => l.id === lesson.id));
+    
+    setSendingFeedback(true);
+    try {
+      const response = await fetch('http://localhost:8000/admin/send-lesson-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacherId,
+          student_id: selectedStudent.id,
+          lesson_id: lesson.id,
+          lesson_title: lesson.title,
+          module_title: parentModule?.title || null,
+          exercise_video_url: lesson.exercise_video_url,
+          feedback_text: text
+        })
+      });
+
+      if (response.ok) {
+        // 1. Limpa input
+        setStudentExerciseFeedback("");
+        
+        // 2. Fecha modal e pausa video
+        setShowStudentExerciseModal(false);
+        if (exerciseTeacherVideoRef.current) { try { exerciseTeacherVideoRef.current.pause(); } catch (e) {} }
+        setSelectedLessonForExercise(null);
+        
+        // 3. Muda para aba Chat do aluno
+        setViewMode('chat');
+        
+        // 4. Força refresh do chat (pega a mensagem nova)
+        await fetchMessages(selectedStudent.id);
+        
+        // 5. Garante scroll para o final (useEffect de messages tambem dispara, mas garantimos com timeout)
+        setTimeout(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+          }
+        }, 150);
+      } else {
+        throw new Error('Falha ao enviar feedback');
+      }
+    } catch (err) {
+      console.error('Erro ao enviar feedback:', err);
+      alert('Erro ao enviar feedback para o chat');
+    } finally {
+      setSendingFeedback(false);
+    }
+  };
+
+  const handleDeleteStudent = async (studentId: string) => {
+    if (!confirm('Tem certeza que deseja excluir este aluno? Esta ação não pode ser desfeita.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:8000/admin/students/${studentId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao excluir aluno');
+      }
+
+      fetchStudents();
+      if (selectedStudent?.id === studentId) {
+        setSelectedStudent(null);
+      }
+    } catch (err) {
+      console.error('Erro ao excluir aluno:', err);
+      alert('Erro ao excluir aluno. Tente novamente.');
+    }
+  };
+
+  const handleEditStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+
+    try {
+      const response = await fetch(`http://localhost:8000/admin/students/${editingStudent.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          full_name: editStudentName,
+          instruments: editSelectedInstruments,
+          phone: editStudentPhone || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao editar aluno');
+      }
+
+      setShowEditStudentModal(false);
+      setEditingStudent(null);
+      fetchStudents();
+    } catch (err) {
+      console.error('Erro ao editar aluno:', err);
+      alert('Erro ao editar aluno. Tente novamente.');
     }
   };
 
@@ -644,7 +957,8 @@ export default function TeacherDashboard() {
           full_name: fullName,
           username: username.trim().toLowerCase(),
           password: password,
-          instrument: instrument
+          instruments: selectedInstruments,
+          phone: phone || null
         })
       });
 
@@ -653,6 +967,8 @@ export default function TeacherDashboard() {
         setFullName("");
         setUsername("");
         setPassword("");
+        setPhone("");
+        setSelectedInstruments([]);
         fetchStudents();
       }
     } catch (err) {
@@ -801,45 +1117,170 @@ export default function TeacherDashboard() {
   }
 };
 
-  const handleUploadVideo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedModule || !selectedVideoFile) return;
-    
-    console.log('Iniciando upload do vídeo...', videoTitle);
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('module_id', selectedModule);
-      formData.append('title', videoTitle);
-      formData.append('description', videoDescription);
-      formData.append('video', selectedVideoFile);
+  const handleDeleteLesson = async (lesson: Lesson) => {
+    if (!window.confirm(`Tem certeza que deseja excluir a aula "${lesson.title}"?`)) {
+      return;
+    }
 
-      const response = await fetch('http://localhost:8000/upload-lesson-video', {
-        method: 'POST',
-        body: formData
+    setDeletingLesson(true);
+    try {
+      const response = await fetch(`http://localhost:8000/lessons/${lesson.id}`, {
+        method: 'DELETE'
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Vídeo enviado com sucesso:', data);
-        setShowUploadModal(false);
-        setVideoTitle("");
-        setVideoDescription("");
-        setSelectedModule("");
-        setSelectedVideoFile(null);
-        // Refresh course videos if needed
-        if (selectedCourse) {
-          fetchCourseVideos(selectedCourse.id);
-        }
-      } else {
+      if (!response.ok) {
         const errorText = await response.text();
-        console.error('Erro na resposta do servidor:', errorText);
+        throw new Error(`Erro ${response.status}: ${errorText}`);
+      }
+
+      console.log('Aula excluída com sucesso');
+      // Refresh course modules
+      if (selectedCourse) {
+        await fetchCourseModules(selectedCourse.id);
+        fetchCourseVideos(selectedCourse.id);
       }
     } catch (err) {
-      console.error('Erro ao enviar vídeo:', err);
+      console.error('Erro ao excluir aula:', err);
+      alert('Erro ao excluir aula: ' + (err as Error).message);
     } finally {
-      setUploading(false);
+      setDeletingLesson(false);
     }
+  };
+
+  const handleOpenEditLesson = (lesson: Lesson) => {
+    setEditingLesson(lesson);
+    setEditLessonTitle(lesson.title);
+    setEditLessonDescription(lesson.description || "");
+    setShowEditLessonModal(true);
+  };
+
+  const handleEditLesson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLesson) return;
+
+    setDeletingLesson(true); // Usamos o mesmo estado para loading
+    try {
+      const response = await fetch(`http://localhost:8000/lessons/${editingLesson.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: editLessonTitle,
+          description: editLessonDescription
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erro ${response.status}: ${errorText}`);
+      }
+
+      console.log('Aula atualizada com sucesso');
+      setShowEditLessonModal(false);
+      setEditingLesson(null);
+      // Refresh course modules
+      if (selectedCourse) {
+        await fetchCourseModules(selectedCourse.id);
+        fetchCourseVideos(selectedCourse.id);
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar aula:', err);
+      alert('Erro ao atualizar aula: ' + (err as Error).message);
+    } finally {
+      setDeletingLesson(false);
+    }
+  };
+
+  const handleUploadVideo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedModule || !selectedVideoFile) return;
+
+    console.log('Iniciando upload do vídeo...', videoTitle);
+    console.log('selectedModule:', selectedModule);
+    setUploading(true);
+    setUploadProgress(0);
+
+    const uploadUrl = 'http://localhost:8000/upload-lesson-video';
+    const formData = new FormData();
+    formData.append('module_id', selectedModule);
+    formData.append('title', videoTitle);
+    formData.append('description', videoDescription);
+    formData.append('video', selectedVideoFile);
+
+    console.log('Iniciando XHR para o backend...', uploadUrl);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', uploadUrl);
+    
+    let phase2Interval: any = null;
+
+    // Monitorar progresso do upload (Fase 1: 0-85%)
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percentCompleted = Math.round((event.loaded / event.total) * 85);
+        setUploadProgress(percentCompleted);
+        console.log(`Progresso do upload (Fase 1): ${percentCompleted}%`);
+      }
+    };
+
+    // Quando o upload para o servidor for concluído (inicia Fase 2)
+    xhr.upload.onloadend = () => {
+      console.log('Upload para o servidor concluído. Iniciando Fase 2...');
+      // Animação suave para 85-99%
+      let currentProgress = 85;
+      phase2Interval = setInterval(() => {
+        if (currentProgress < 99) {
+          currentProgress += 1;
+          setUploadProgress(currentProgress);
+          console.log(`Processando no servidor (Fase 2): ${currentProgress}%`);
+        }
+      }, 300);
+    };
+
+    // Quando a resposta do servidor chegar
+    xhr.onload = async () => {
+      if (phase2Interval) clearInterval(phase2Interval);
+      
+      if (xhr.status >= 200 && xhr.status < 300) {
+        setUploadProgress(100);
+        console.log('Fase 3: 100% - concluído!');
+        
+        // Espera um momento para exibir o 100% antes de fechar o modal
+        setTimeout(async () => {
+          const data = JSON.parse(xhr.responseText);
+          console.log('Vídeo enviado com sucesso:', data);
+          setShowUploadModal(false);
+          setVideoTitle("");
+          setVideoDescription("");
+          setSelectedModule("");
+          setSelectedVideoFile(null);
+          setUploadProgress(0);
+          // Refresh course modules and videos
+          if (selectedCourse) {
+            await fetchCourseModules(selectedCourse.id);
+            fetchCourseVideos(selectedCourse.id);
+          }
+          setUploading(false);
+        }, 500);
+      } else {
+        console.error('Erro na resposta do servidor:', xhr.status, xhr.responseText);
+        alert(`Erro ao enviar vídeo: ${xhr.status} ${xhr.statusText}`);
+        setUploading(false);
+        setUploadProgress(0);
+      }
+    };
+
+    // Em caso de erro
+    xhr.onerror = () => {
+      if (phase2Interval) clearInterval(phase2Interval);
+      console.error('Erro na requisição XHR');
+      alert('Erro ao enviar vídeo. Verifique sua conexão.');
+      setUploading(false);
+      setUploadProgress(0);
+    };
+
+    xhr.send(formData);
   };
 
   return (
@@ -1054,51 +1495,88 @@ export default function TeacherDashboard() {
             ))
           ) : (
             students.filter(s => s.full_name.toLowerCase().includes(searchQuery.toLowerCase())).map((student) => (
-              <button
+              <div
                 key={student.id}
-                onClick={() => handleSelectStudent(student)}
                 className={cn(
-                  "w-full p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 group",
+                  "w-full p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 group cursor-pointer",
                   selectedStudent?.id === student.id 
                     ? "bg-zinc-900 border-[#22c55e]/30 shadow-[0_0_20px_rgba(34,197,94,0.05)]" 
                     : "bg-transparent border-transparent hover:bg-white/5"
                 )}
               >
-                <div className="relative">
-                  <div className="w-12 h-12 rounded-full overflow-hidden bg-zinc-800">
-                    <img src={student.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`} alt={student.full_name} className="w-full h-full object-cover" />
-                  </div>
-                  {student.unread_count > 0 && (
-                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-[#ef4444] rounded-full border-2 border-[#0d0d0d] flex items-center justify-center text-[0.625rem] font-bold">
-                      {student.unread_count}
+                <button 
+                  className="flex-1 flex items-center gap-4"
+                  onClick={() => handleSelectStudent(student)}
+                >
+                  <div className="relative">
+                    <div className="w-12 h-12 rounded-full overflow-hidden bg-zinc-800">
+                      <img src={student.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`} alt={student.full_name} className="w-full h-full object-cover" />
                     </div>
-                  )}
-                </div>
-                
-                <div className="flex-1 text-left min-w-0">
-                  <h4 className="font-bold text-sm truncate">{student.full_name}</h4>
-                  <p className="text-[0.6875rem] text-zinc-500 font-medium">{student.instrument}</p>
-                  
-                  {/* Mini VU Meter */}
-                  <div className="flex gap-[1px] items-end h-2 mt-2">
-                    {[...Array(12)].map((_, i) => {
-                      const active = (i / 11) * 100 <= student.progress;
-                      return (
-                        <div 
-                          key={i} 
-                          className={cn(
-                            "flex-1 rounded-full",
-                            active 
-                              ? i < 4 ? "bg-[#22c55e]" : i < 8 ? "bg-[#f97316]" : "bg-[#ef4444]"
-                              : "bg-zinc-800"
-                          )}
-                          style={{ height: `${20 + (i * 7)}%` }}
-                        />
-                      );
-                    })}
+                    {student.unread_count > 0 && (
+                      <div className="absolute -top-1 -right-1 w-5 h-5 bg-[#ef4444] rounded-full border-2 border-[#0d0d0d] flex items-center justify-center text-[0.625rem] font-bold">
+                        {student.unread_count}
+                      </div>
+                    )}
                   </div>
+                  
+                  <div className="flex-1 text-left min-w-0">
+                    <h4 className="font-bold text-sm truncate">{student.full_name}</h4>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {student.instruments.map((inst, idx) => (
+                        <span key={idx} className="text-[0.625rem] text-zinc-400 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+                          {inst}
+                        </span>
+                      ))}
+                    </div>
+                    
+                    {/* Mini VU Meter */}
+                    <div className="flex gap-[1px] items-end h-2 mt-2">
+                      {[...Array(12)].map((_, i) => {
+                        const active = (i / 11) * 100 <= student.progress;
+                        return (
+                          <div 
+                            key={i} 
+                            className={cn(
+                              "flex-1 rounded-full",
+                              active 
+                                ? i < 4 ? "bg-[#22c55e]" : i < 8 ? "bg-[#f97316]" : "bg-[#ef4444]"
+                                : "bg-zinc-800"
+                            )}
+                            style={{ height: `${20 + (i * 7)}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </button>
+                
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingStudent(student);
+                      setEditStudentName(student.full_name);
+                      setEditSelectedInstruments(student.instruments);
+                      setEditStudentPhone(student.phone || "");
+                      setShowEditStudentModal(true);
+                    }}
+                    className="p-2 text-zinc-500 hover:text-[#22c55e] transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Tem certeza que deseja excluir o aluno "${student.full_name}"?`)) {
+                        handleDeleteStudent(student.id);
+                      }
+                    }}
+                    className="p-2 text-zinc-500 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-              </button>
+              </div>
             ))
           )}
           </div>
@@ -1512,44 +1990,141 @@ export default function TeacherDashboard() {
                 </div>
               </header>
               
-              <div className="flex-1 overflow-y-auto p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {courseVideos.map((video) => (
-                  <div key={video.id} className="bg-zinc-900/40 rounded-3xl border border-white/5 overflow-hidden group hover:border-[#22c55e]/30 transition-all">
-                    <div className="relative aspect-video bg-black/40">
-                      <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover opacity-60" />
-                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center">
-                          <Play className="w-6 h-6 text-white fill-white" />
-                        </button>
-                      </div>
-                      <div className="absolute top-3 left-3 px-2 py-1 rounded-md bg-black/60 backdrop-blur-md text-[0.625rem] font-bold text-zinc-400 uppercase tracking-wider">
-                        {video.module}
-                      </div>
+              <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+                {courseModules.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-zinc-600 py-12">
+                    <div className="w-20 h-20 rounded-full bg-zinc-900 flex items-center justify-center mb-6">
+                      <BookOpen className="w-10 h-10" />
                     </div>
-                    <div className="p-5 space-y-4">
-                      <div className="flex justify-between items-start gap-2">
-                        <h4 className="font-bold text-sm leading-tight">{video.title}</h4>
-                        <button className="text-zinc-600 hover:text-white transition-colors">
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-1.5">
-                          <Eye className="w-3.5 h-3.5 text-zinc-600" />
-                          <span className="text-xs text-zinc-500 font-medium">{video.views}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-zinc-600" />
-                          <span className="text-xs text-zinc-500 font-medium">{video.exercises_count} treinos</span>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 pt-2">
-                        <button className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-400 text-[0.6875rem] font-bold hover:text-white transition-colors border border-white/5">Editar</button>
-                        <button className="flex-1 py-2 rounded-xl bg-red-500/10 text-red-500 text-[0.6875rem] font-bold hover:bg-red-500/20 transition-colors border border-red-500/10">Excluir</button>
-                      </div>
-                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Nenhum módulo encontrado</h3>
+                    <p className="text-sm max-w-xs text-center">Crie um módulo primeiro para poder adicionar aulas.</p>
                   </div>
-                ))}
+                ) : (
+                  courseModules.map((module) => (
+                    <div key={module.id} className="bg-zinc-900/40 rounded-3xl border border-white/5 overflow-hidden">
+                      <div className="p-5 border-b border-white/5">
+                        <h3 className="font-bold text-lg">{module.title}</h3>
+                        {module.description && (
+                          <p className="text-sm text-zinc-500 mt-1">{module.description}</p>
+                        )}
+                      </div>
+                      
+                      {(module.lessons || []).length === 0 ? (
+                        <div className="p-8 text-center text-zinc-600">
+                          <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4">
+                            <Video className="w-8 h-8 text-zinc-600" />
+                          </div>
+                          <h4 className="font-bold text-white mb-2">Nenhuma aula neste módulo</h4>
+                          <p className="text-sm mb-4">Adicione o primeiro vídeo para começar</p>
+                          <button 
+                            onClick={() => { 
+                              setSelectedModule(module.id); 
+                              setShowUploadModal(true); 
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white font-bold text-sm rounded-xl"
+                          >
+                            Adicionar Aula
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-5">
+                          {(module.lessons || []).map((lesson) => (
+                            <div key={lesson.id} className="bg-black/40 rounded-2xl border border-white/5 overflow-hidden group hover:border-[#22c55e]/30 transition-all">
+                              <div 
+                                className="relative aspect-video bg-zinc-800 cursor-pointer"
+                                onClick={() => lesson.video_url && setSelectedLessonForModal(lesson)}
+                              >
+                                {lesson.video_url ? (
+                                  <video 
+                                    src={lesson.video_url} 
+                                    controls
+                                    preload="metadata"
+                                    className="w-full h-full object-cover"
+                                    onClick={(e) => e.stopPropagation()} // Prevent double-click to open modal
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center">
+                                    <Video className="w-12 h-12 text-zinc-600" />
+                                  </div>
+                                )}
+                                {!lesson.video_url && (
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <button 
+                                      onClick={() => setSelectedLessonForModal(lesson)}
+                                      className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center hover:bg-white/30 transition-all"
+                                    >
+                                      <Play className="w-6 h-6 text-white fill-white" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="p-4 space-y-3">
+                                <div className="flex justify-between items-start gap-2">
+                                  <h4 className="font-bold text-sm leading-tight">{lesson.title}</h4>
+                                  <div className="relative" ref={openDropdownLessonId === lesson.id ? dropdownRef : null}>
+                                    <button 
+                                      className="text-zinc-600 hover:text-white transition-colors"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownLessonId(openDropdownLessonId === lesson.id ? null : lesson.id);
+                                      }}
+                                    >
+                                      <MoreVertical className="w-4 h-4" />
+                                    </button>
+                                    
+                                    {/* Dropdown Menu */}
+                                    {openDropdownLessonId === lesson.id && (
+                                      <div className="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/5 rounded-xl shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100">
+                                        <button
+                                          className="w-full px-4 py-3 text-left text-sm text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors flex items-center gap-2 rounded-t-xl"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setOpenDropdownLessonId(null);
+                                            handleOpenEditLesson(lesson);
+                                          }}
+                                        >
+                                          ✏️ Editar
+                                        </button>
+                                        <button
+                                          className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors flex items-center gap-2 rounded-b-xl"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setOpenDropdownLessonId(null);
+                                            handleDeleteLesson(lesson);
+                                          }}
+                                        >
+                                          🗑️ Excluir
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                {lesson.description && (
+                                  <p className="text-xs text-zinc-500">{lesson.description}</p>
+                                )}
+                                <div className="flex gap-2 pt-1">
+                                  <button 
+                                    onClick={() => handleOpenEditLesson(lesson)}
+                                    className="flex-1 py-2 rounded-xl bg-zinc-800 text-zinc-400 text-[0.6875rem] font-bold hover:text-white transition-colors border border-white/5"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteLesson(lesson)}
+                                    disabled={deletingLesson}
+                                    className="flex-1 py-2 rounded-xl bg-red-500/10 text-red-500 text-[0.6875rem] font-bold hover:bg-red-500/20 transition-colors border border-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Excluir
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </>
           ) : (
@@ -1573,7 +2148,7 @@ export default function TeacherDashboard() {
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <h2 className="text-xl font-bold">Alunos <span className="text-zinc-500">({selectedStudent.instrument})</span></h2>
+                  <h2 className="text-xl font-bold">Alunos <span className="text-zinc-500">({selectedStudent.instruments.join(', ')})</span></h2>
                   <div className="flex flex-wrap gap-3">
                     <div className="px-3 py-1.5 rounded-full bg-[#22c55e]/10 border border-[#22c55e]/20 flex items-center gap-2">
                       <Users className="w-3.5 h-3.5 text-[#22c55e]" />
@@ -1658,9 +2233,7 @@ export default function TeacherDashboard() {
                                 )}
                               </div>
                             )}
-                            {msg.type === 'text' && (
-                              <p className="text-sm leading-relaxed">{msg.content}</p>
-                            )}
+                            {msg.type === 'text' && renderTextContentWithVideo(msg.content)}
                             <span className="text-[0.625rem] opacity-50 mt-1 block text-right">
                               {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
@@ -1760,10 +2333,33 @@ export default function TeacherDashboard() {
               {viewMode === 'lessons' && (
                 <div className="flex-1 flex flex-col bg-[#050505]">
                   <div className="p-4 md:p-6 border-b border-white/5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-[#0d0d0d]/20">
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
-                      <h3 className="font-bold text-sm">Gerenciando Aulas: {selectedStudent.full_name} ({selectedStudent.instrument})</h3>
+                    <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
+                        <h3 className="font-bold text-sm">Gerenciando Aulas: {selectedStudent.full_name}</h3>
+                      </div>
+                      
+                      {/* Instrument Selector */}
+                      {selectedStudent.instruments.length > 1 && (
+                        <div className="flex gap-2">
+                          {selectedStudent.instruments.map((inst) => (
+                            <button
+                              key={inst}
+                              onClick={() => setSelectedStudentInstrument(inst)}
+                              className={cn(
+                                "px-3 py-1.5 rounded-full text-xs font-medium transition-colors border",
+                                selectedStudentInstrument === inst
+                                  ? "bg-[#22c55e] border-[#22c55e] text-black"
+                                  : "bg-zinc-800 border-white/10 text-zinc-300 hover:bg-zinc-700"
+                              )}
+                            >
+                              {inst}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                    
                     {/* Mini VU Meter Horizontal */}
                     <div className="flex gap-[2px] items-end h-4">
                       {[...Array(20)].map((_, i) => (
@@ -1793,27 +2389,80 @@ export default function TeacherDashboard() {
                             {(module.lessons || []).map((lesson) => (
                               <div key={lesson.id} className={cn(
                                 "flex flex-col md:flex-row items-start md:items-center justify-between p-4 rounded-xl border transition-all gap-4",
-                                lesson.is_locked ? "bg-black/40 border-white/5" : "bg-[#22c55e]/5 border-[#22c55e]/20"
+                                lesson.status === 'approved' && "bg-[#22c55e]/5 border-[#22c55e]/30",
+                                lesson.status === 'pending_review' && "bg-[#eab308]/5 border-[#eab308]/40 shadow-[0_0_15px_rgba(234,179,8,0.1)]",
+                                lesson.status === 'unlocked' && "bg-[#3b82f6]/5 border-[#3b82f6]/30",
+                                lesson.status === 'locked' && "bg-black/40 border-white/5"
                               )}>
-                                <div className="flex items-center gap-4">
-                                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg bg-black/40 flex items-center justify-center overflow-hidden relative">
-                                    <Video className="w-4 h-4 md:w-5 md:h-5 text-zinc-600" />
-                                    <div className="absolute inset-0 bg-black/20" />
-                                  </div>
-                                  <div>
-                                    <p className={cn("text-sm font-bold", lesson.is_locked ? "text-zinc-500" : "text-white")}>{lesson.title}</p>
-                                    <span className="text-[0.625rem] text-zinc-600 font-bold uppercase tracking-wider">Video Aula</span>
+                                <div className="flex items-center gap-4 w-full md:w-auto flex-1 min-w-0">
+                                  {lesson.has_exercise ? (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedLessonForExercise(lesson);
+                                        setShowStudentExerciseModal(true);
+                                        setStudentExerciseFeedback("");
+                                      }}
+                                      className="w-10 h-10 md:w-12 md:h-12 rounded-lg overflow-hidden flex-shrink-0 relative group bg-black/40"
+                                    >
+                                      <img
+                                        src={lesson.exercise_thumbnail_url || lesson.exercise_video_url ? (lesson.exercise_thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=200") : "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=200"}
+                                        alt="Envio do Aluno"
+                                        className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                                        onError={(e) => { (e.currentTarget as HTMLImageElement).src = "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=200"; }}
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-black/60 transition-colors">
+                                        <Play className="w-5 h-5 md:w-6 md:h-6 text-white fill-white" />
+                                      </div>
+                                    </button>
+                                  ) : (
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-lg bg-black/40 flex items-center justify-center overflow-hidden relative">
+                                      <Video className="w-4 h-4 md:w-5 md:h-5 text-zinc-600" />
+                                      <div className="absolute inset-0 bg-black/20" />
+                                    </div>
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <p className={cn(
+                                      "text-sm font-bold truncate",
+                                      lesson.status === 'locked' ? "text-zinc-500" : "text-white"
+                                    )}>
+                                      {lesson.title}
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2 mt-1">
+                                      <span className={cn(
+                                        "text-[0.625rem] font-black uppercase tracking-wider",
+                                        lesson.status === 'approved' && "text-[#22c55e]",
+                                        lesson.status === 'pending_review' && "text-[#eab308]",
+                                        lesson.status === 'unlocked' && "text-[#3b82f6]",
+                                        lesson.status === 'locked' && "text-zinc-600"
+                                      )}>
+                                        {lesson.status === 'approved' && "✅ AULA APROVADA"}
+                                        {lesson.status === 'pending_review' && "🕒 VIDEO ENVIADO"}
+                                        {lesson.status === 'unlocked' && "🔓 LIBERADA"}
+                                        {lesson.status === 'locked' && "🔒 BLOQUEADA"}
+                                      </span>
+                                      {lesson.has_exercise && (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLessonForExercise(lesson);
+                                            setShowStudentExerciseModal(true);
+                                            setStudentExerciseFeedback("");
+                                          }}
+                                          className="px-2 py-0.5 rounded-full border border-[#eab308]/50 text-[#eab308] text-[0.625rem] font-bold active:scale-95 transition-transform"
+                                        >
+                                          Ver treino
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-4">
-                                  <span className={cn("text-[0.6875rem] font-bold uppercase tracking-wider", lesson.is_locked ? "text-zinc-600" : "text-[#22c55e]")}>
-                                    {lesson.is_locked ? "Bloqueada" : "Liberada"}
-                                  </span>
-                                  <button 
+                                <div className="flex items-center gap-4 w-full md:w-auto">
+                                  <button
                                     onClick={() => toggleLessonLock(lesson.id, lesson.is_locked)}
                                     className={cn(
-                                      "w-12 h-6 rounded-full relative transition-all duration-300",
+                                      "w-12 h-6 rounded-full relative transition-all duration-300 flex-shrink-0",
                                       lesson.is_locked ? "bg-zinc-800" : "bg-[#22c55e]"
                                     )}
                                   >
@@ -1844,6 +2493,130 @@ export default function TeacherDashboard() {
           </div>
         )}
       </main>
+
+      {/* Modal: Visualizar Exercicio do Aluno + Aprovar + Feedback */}
+      {showStudentExerciseModal && selectedLessonForExercise && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[120] flex items-center justify-center p-3 md:p-6">
+          <div className="w-full max-w-3xl max-h-[95vh] overflow-y-auto bg-zinc-900 rounded-3xl border border-white/5 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 p-5 md:p-6 border-b border-white/5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className={cn(
+                    "px-3 py-1 rounded-full text-[0.6875rem] font-black uppercase tracking-wider",
+                    selectedLessonForExercise.status === 'approved' && "bg-[#22c55e] text-black",
+                    selectedLessonForExercise.status === 'pending_review' && "bg-[#eab308] text-black",
+                    selectedLessonForExercise.status === 'unlocked' && "bg-[#3b82f6] text-white",
+                    (!selectedLessonForExercise.status || selectedLessonForExercise.status === 'locked') && "bg-zinc-800 text-zinc-500"
+                  )}>
+                    {selectedLessonForExercise.status === 'approved' && "✅ Aula Aprovada"}
+                    {selectedLessonForExercise.status === 'pending_review' && "🕒 Aguardando Avaliacao"}
+                    {selectedLessonForExercise.status === 'unlocked' && "🔓 Liberada para Estudo"}
+                    {(selectedLessonForExercise.status === 'locked' || !selectedLessonForExercise.status) && "🔒 Bloqueada"}
+                  </span>
+                </div>
+                <h2 className="text-xl md:text-2xl font-bold text-white truncate">{selectedLessonForExercise.title}</h2>
+                <p className="text-zinc-500 text-xs md:text-sm mt-1">Envio do exercicio do aluno - {selectedStudent?.full_name}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowStudentExerciseModal(false);
+                  setSelectedLessonForExercise(null);
+                  setStudentExerciseFeedback("");
+                  if (exerciseTeacherVideoRef.current) { try { exerciseTeacherVideoRef.current.pause(); } catch (e) {} }
+                }}
+                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+
+            {/* Video Player */}
+            <div className="bg-black aspect-video w-full">
+              {selectedLessonForExercise.exercise_video_url ? (
+                <video
+                  ref={exerciseTeacherVideoRef}
+                  src={selectedLessonForExercise.exercise_video_url}
+                  controls
+                  className="w-full h-full object-contain"
+                  playsInline
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-zinc-500">
+                  Sem video disponivel para este envio.
+                </div>
+              )}
+            </div>
+
+            {/* Acoes + Feedback */}
+            <div className="p-5 md:p-6 space-y-5">
+              {/* Aprovar Aula */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 p-4 rounded-2xl bg-[#22c55e]/5 border border-[#22c55e]/20">
+                <div className="flex-1">
+                  <h3 className="font-bold text-white text-sm">Concluir e Aprovar Treino</h3>
+                  <p className="text-zinc-500 text-xs mt-0.5">Marca a aula como APROVADA para o aluno.</p>
+                </div>
+                <button
+                  onClick={() => approveLesson(selectedLessonForExercise)}
+                  disabled={approvingLesson || selectedLessonForExercise.status === 'approved'}
+                  className={cn(
+                    "px-5 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 flex-shrink-0",
+                    selectedLessonForExercise.status === 'approved'
+                      ? "bg-[#22c55e]/20 text-[#22c55e] cursor-default"
+                      : approvingLesson
+                        ? "bg-[#22c55e]/50 text-black/60 cursor-wait"
+                        : "bg-[#22c55e] text-black active:scale-95 hover:brightness-110"
+                  )}
+                >
+                  {approvingLesson ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</>
+                  ) : selectedLessonForExercise.status === 'approved' ? (
+                    <><CheckCircle2 className="w-5 h-5" /> Aprovado</>
+                  ) : (
+                    <><CheckCircle2 className="w-5 h-5" /> Aprovar Treino / Concluir Aula</>
+                  )}
+                </button>
+              </div>
+
+              {/* Feedback Chat */}
+              <div className="p-4 rounded-2xl bg-[#3b82f6]/5 border border-[#3b82f6]/20 space-y-3">
+                <div>
+                  <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4 text-[#3b82f6]" />
+                    Enviar Feedback para o Chat
+                  </h3>
+                  <p className="text-zinc-500 text-xs mt-0.5">
+                    O comentario sera salvo no chat (juntamente com o link do video do treino, se existir).
+                  </p>
+                </div>
+                <textarea
+                  value={studentExerciseFeedback}
+                  onChange={(e) => setStudentExerciseFeedback(e.target.value)}
+                  placeholder="Escreva seu feedback para o aluno aqui... (Ex: 'Excelente execucao, continue praticando a mudanca de acorde!')"
+                  rows={3}
+                  className="w-full bg-zinc-800/50 border border-white/5 rounded-2xl p-4 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-[#3b82f6]/40 resize-none"
+                />
+                <button
+                  onClick={() => sendLessonFeedback(selectedLessonForExercise)}
+                  disabled={sendingFeedback || !studentExerciseFeedback.trim()}
+                  className={cn(
+                    "w-full px-5 py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+                    (sendingFeedback || !studentExerciseFeedback.trim())
+                      ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                      : "bg-[#3b82f6] text-white active:scale-95 hover:brightness-110"
+                  )}
+                >
+                  {sendingFeedback ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Enviando...</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> Enviar feedback para o Chat</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de Cadastro */}
       {showAddModal && (
@@ -1904,16 +2677,40 @@ export default function TeacherDashboard() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Instrumento</label>
-                <select 
-                  value={instrument}
-                  onChange={e => setInstrument(e.target.value)}
-                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors appearance-none"
-                >
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Telefone</label>
+                <input 
+                  placeholder="Ex: (11) 99999-9999" 
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Instrumentos</label>
+                <div className="flex flex-wrap gap-2">
                   {courses.map(c => (
-                    <option key={c.id} value={c.name}>{c.name}</option>
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedInstruments(prev => 
+                          prev.includes(c.name) 
+                            ? prev.filter(i => i !== c.name) 
+                            : [...prev, c.name]
+                        );
+                      }}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-sm font-medium transition-colors border",
+                        selectedInstruments.includes(c.name)
+                          ? "bg-[#22c55e] border-[#22c55e] text-black"
+                          : "bg-zinc-800 border-white/10 text-zinc-300 hover:bg-zinc-700"
+                      )}
+                    >
+                      {c.name}
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
 
               <button
@@ -1922,6 +2719,81 @@ export default function TeacherDashboard() {
                 className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
               >
                 {loading ? <Loader2 className="animate-spin" size={20} /> : "CADASTRAR ALUNO"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Aluno */}
+      {showEditStudentModal && editingStudent && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Editar Aluno</h2>
+                <p className="text-zinc-500 text-sm">Atualize os dados do aluno.</p>
+              </div>
+              <button onClick={() => { setShowEditStudentModal(false); setEditingStudent(null); }} className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleEditStudent} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Nome Completo</label>
+                <input 
+                  placeholder="Ex: João Silva" 
+                  value={editStudentName}
+                  onChange={e => setEditStudentName(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Telefone</label>
+                <input 
+                  placeholder="Ex: (11) 99999-9999" 
+                  value={editStudentPhone}
+                  onChange={e => setEditStudentPhone(e.target.value)}
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Instrumentos</label>
+                <div className="flex flex-wrap gap-2">
+                  {courses.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        setEditSelectedInstruments(prev => 
+                          prev.includes(c.name) 
+                            ? prev.filter(i => i !== c.name) 
+                            : [...prev, c.name]
+                        );
+                      }}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-sm font-medium transition-colors border",
+                        editSelectedInstruments.includes(c.name)
+                          ? "bg-[#22c55e] border-[#22c55e] text-black"
+                          : "bg-zinc-800 border-white/10 text-zinc-300 hover:bg-zinc-700"
+                      )}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10"
+              >
+                {loading ? <Loader2 className="animate-spin" size={20} /> : "SALVAR ALTERAÇÕES"}
               </button>
             </form>
           </div>
@@ -2096,6 +2968,36 @@ export default function TeacherDashboard() {
         </div>
       )}
 
+      {/* Modal de Reprodução de Vídeo */}
+      {selectedLessonForModal && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl bg-zinc-900 rounded-3xl border border-white/5 overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b border-white/5">
+              <h2 className="text-xl font-bold text-white">{selectedLessonForModal.title}</h2>
+              <button 
+                onClick={() => setSelectedLessonForModal(null)} 
+                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+            <div className="p-4">
+              {selectedLessonForModal.video_url && (
+                <video 
+                  src={selectedLessonForModal.video_url} 
+                  controls 
+                  autoPlay
+                  className="w-full aspect-video rounded-xl bg-black"
+                />
+              )}
+              {selectedLessonForModal.description && (
+                <p className="text-zinc-400 mt-4 text-sm">{selectedLessonForModal.description}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Upload de Vídeo */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
@@ -2161,12 +3063,83 @@ export default function TeacherDashboard() {
                 </div>
               </div>
 
+              {/* Barra de Progresso do Upload */}
+              {uploading && (
+                <div className="space-y-2 mt-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-zinc-400">Enviando vídeo...</span>
+                    <span className="text-[#22c55e] font-bold">{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-[#22c55e] to-[#16a34a] transition-all duration-300 ease-out"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={uploading || !selectedVideoFile || !selectedModule}
                 className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uploading ? <Loader2 className="animate-spin" size={20} /> : "ENVIAR VÍDEO"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Aula */}
+      {showEditLessonModal && editingLesson && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-zinc-900 rounded-[2.5rem] border border-white/5 p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Editar Aula</h2>
+                <p className="text-zinc-500 text-sm">Atualize os dados da aula</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowEditLessonModal(false);
+                  setEditingLesson(null);
+                }} 
+                className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+
+            <form onSubmit={handleEditLesson} className="flex flex-col gap-4">
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Título da Aula</label>
+                <input 
+                  placeholder="Título da aula" 
+                  value={editLessonTitle}
+                  onChange={e => setEditLessonTitle(e.target.value)}
+                  required
+                  className="w-full h-14 bg-zinc-800/50 border border-white/5 px-6 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors"
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <label className="text-[0.625rem] font-bold text-zinc-500 uppercase ml-4">Descrição (opcional)</label>
+                <textarea 
+                  placeholder="Breve descrição da aula..." 
+                  value={editLessonDescription}
+                  onChange={e => setEditLessonDescription(e.target.value)}
+                  rows={3}
+                  className="w-full bg-zinc-800/50 border border-white/5 px-6 py-4 rounded-2xl text-sm focus:outline-none focus:border-[#22c55e]/30 transition-colors resize-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={deletingLesson}
+                className="w-full h-14 rounded-2xl font-bold text-white transition-all active:scale-[0.98] mt-4 flex items-center justify-center bg-gradient-to-r from-[#22c55e] to-[#16a34a] shadow-lg shadow-green-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deletingLesson ? <Loader2 className="animate-spin" size={20} /> : "SALVAR ALTERAÇÕES"}
               </button>
             </form>
           </div>

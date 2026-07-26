@@ -13,9 +13,13 @@ export default function Home() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [teacherId, setTeacherId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [loadingTeacherId, setLoadingTeacherId] = useState(false);
   const [theme, setTheme] = useState("dark"); // Initialize with default
   const [themeLoaded, setThemeLoaded] = useState(false); // To track when we get theme from localStorage
+
+  // Computed loading state: true if any of the loading states are true
+  const loading = loadingProfile || loadingTeacherId;
 
   // Load theme from localStorage on mount
   useEffect(() => {
@@ -50,6 +54,7 @@ export default function Home() {
   }, [theme, themeLoaded]);
 
   const fetchTeacherId = async () => {
+    setLoadingTeacherId(true);
     const { data, error } = await supabase
       .from('profiles')
       .select('id')
@@ -65,10 +70,12 @@ export default function Home() {
       // Se encontrar o perfil, usa o ID do banco, senão usa o fixo
       setTeacherId(data?.id || '54268554-9b11-4986-9c02-c1637b0863fc');
     }
+    setLoadingTeacherId(false);
   };
 
   useEffect(() => {
     const fetchProfile = async (userId: string) => {
+      setLoadingProfile(true);
       console.log("🔍 Iniciando busca de perfil para:", userId);
       
       const { data, error, status } = await supabase
@@ -97,7 +104,7 @@ export default function Home() {
       }
       
       setProfile(data);
-      setLoading(false);
+      setLoadingProfile(false);
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -105,8 +112,6 @@ export default function Home() {
       if (session) {
         fetchProfile(session.user.id);
         fetchTeacherId(); // Fetch teacherId only after we have a session
-      } else {
-        setLoading(false);
       }
     });
 

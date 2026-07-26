@@ -1,0 +1,10 @@
+Testing Supabase Admin test:
+Error accessing lessons table: <class 'postgrest.exceptions.APIError'>
+Exception: {'message': 'permission denied for table lessons', 'code': '42501', 'hint': None, 'details': None}
+Traceback (most recent call last):
+  File "D:\Projetos\Projeto meu de Música\backend\test_supabase_admin.py", line 11, in <module>
+    result = supabase_admin.table('lessons').select('*').limit(1).execute()
+  File "D:\Projetos\Projeto meu de Música\backend\venv\Lib\site-packages\postgrest\_sync\request_builder.py", line 96, in execute
+    raise APIError(dict(json_obj))
+postgrest.exceptions.APIError: {'message': 'permission denied for table lessons', 'code': '42501', 'hint': None, 'details': None}
+

@@ -224,6 +224,51 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages]);
 
+  // Helper: Extrai URLs de video do conteudo de texto
+  const extractVideoUrlsFromText = (text: string): string[] => {
+    if (!text) return [];
+    const urlRegex = /https?:\/\/[^\s<>"'`]+/g;
+    const matches = text.match(urlRegex) || [];
+    return matches.filter(url => {
+      const lower = url.toLowerCase();
+      if (/\.(mp4|webm|mov|avi|mkv|m4v|ogg|ogv)(\?|$)/i.test(url)) return true;
+      if (lower.includes('r2.dev')) return true;
+      if (lower.includes('cloudflare')) return true;
+      return false;
+    });
+  };
+
+  // Helper: Renderiza texto com quebras de linha + player de video embutido se encontrar URL
+  const renderTextContentWithVideo = (content: string) => {
+    const videoUrls = extractVideoUrlsFromText(content);
+    if (videoUrls.length === 0) {
+      return <p className="text-[0.9375rem] leading-snug font-medium pr-8 whitespace-pre-wrap">{content}</p>;
+    }
+    let displayText = content;
+    videoUrls.forEach(url => {
+      displayText = displayText.replace(url, '');
+    });
+    displayText = displayText.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    
+    return (
+      <div className="flex flex-col gap-2 min-w-[14rem]">
+        {displayText && (
+          <p className="text-[0.9375rem] leading-snug font-medium pr-8 whitespace-pre-wrap">{displayText}</p>
+        )}
+        {videoUrls.map((url, idx) => (
+          <video
+            key={`${url}-${idx}`}
+            src={url}
+            controls
+            preload="metadata"
+            className="w-64 max-w-[240px] max-h-48 rounded-lg bg-black/30 mt-1 border border-white/5 object-contain h-auto"
+            playsInline
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full bg-black w-full overflow-hidden">
       {/* Messages Area */}
@@ -240,9 +285,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
                   : "bg-zinc-800 border border-zinc-700 text-white rounded-tl-none"
               )}>
                 {/* Text Content */}
-                {msg.type === 'text' && (
-                  <p className="text-[0.9375rem] leading-snug font-medium pr-8">{msg.content}</p>
-                )}
+                {msg.type === 'text' && renderTextContentWithVideo(msg.content)}
                 
                 {/* Video Content */}
                 {msg.type === 'video' && (
