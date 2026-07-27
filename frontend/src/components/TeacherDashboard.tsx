@@ -30,7 +30,8 @@ import {
   EyeOff,
   Pencil,
   Trash2,
-  Menu
+  Menu,
+  Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -137,6 +138,23 @@ export default function TeacherDashboard() {
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const [approvingLesson, setApprovingLesson] = useState(false);
   const exerciseTeacherVideoRef = useRef<HTMLVideoElement>(null);
+  const [openMessageMenuId, setOpenMessageMenuId] = useState<string | null>(null);
+  const messageMenuRef = useRef<HTMLDivElement>(null);
+  const [clearingChat, setClearingChat] = useState(false);
+  const [activeStudentsCount, setActiveStudentsCount] = useState(0);
+  const [pendingExercisesCount, setPendingExercisesCount] = useState(0);
+  const [lastStudentMessages, setLastStudentMessages] = useState<Array<{ student_id: string; student_name: string; avatar_url: string | null; last_time: string; message_preview: string }>>([]);
+
+  // Fecha menu de mensagem ao clicar fora
+  useEffect(() => {
+    const handleClick = (evt: MouseEvent) => {
+      if (messageMenuRef.current && !messageMenuRef.current.contains(evt.target as Node)) {
+        setOpenMessageMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   // Fecha o dropdown ao clicar fora
   useEffect(() => {
@@ -256,6 +274,7 @@ export default function TeacherDashboard() {
     fetchStudents();
     fetchCourses();
     fetchAllModules();
+    fetchDashboardStats();
     
     // Get teacher's ID from auth and fetch profile
     const getTeacherIdAndProfile = async () => {
@@ -286,6 +305,115 @@ export default function TeacherDashboard() {
       }
     };
   }, []);
+
+  const fetchDashboardStats = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const tid = user?.id;
+
+      // 1) Alunos ativos = qtd de alunos com pelo menos 1 aula UNLOCKED ou com exercicio enviado
+      let activeCount = 0;
+      try {
+        const { data: accessRows, error: aErr } = await supabase
+          .from('student_lessons')
+          .select('student_id, is_locked');
+        if (!aErr && accessRows) {
+          const activeIds = new Set(
+            accessRows.filter((r: any) => r.is_locked === false || r.is_completed === true || r.status === 'pending_review' || r.status === 'approved' || r.status === 'unlocked')
+              .map((r: any) => r.student_id)
+          );
+          // Alunos que tem pelo menos 1 exercicio tambem contam como ativos
+          const { data: exRows } = await supabase.from('exercises').select('student_id');
+          (exRows || []).forEach((e: any) => activeIds.add(e.student_id));
+          activeCount = activeIds.size;
+        }
+      } catch (e) { console.warn('Erro ativos:', e); }
+      setActiveStudentsCount(activeCount);
+
+      // 2) Treinos pendentes = exercises ainda sem aprovacao OU student_lessons.status = pending_review
+      let pendingCount = 0;
+      try {
+        const { data: exRows, error: exErr } = await supabase
+          .from('exercises')
+          .select('id, student_id, created_at, status, video_url, thumbnail_url, lesson_id');
+        if (!exErr && exRows) {
+          // Considera pendente: sem status 'approved' explicitamente (ou null/undefined/pending)
+          pendingCount = exRows.filter((e: any) => {
+            const s = String(e.status || '').toLowerCase();
+            return s !== 'approved' && s !== 'rejected';
+          }).length;
+        }
+      } catch (e) { console.warn('Erro exercicios pendentes:', e); }
+      setPendingExercisesCount(pendingCount);
+
+      // 3) Ultimas mensagens (3 alunos com ultima msg recente enviada/recebida)
+      try {
+        if (!tid) return;
+        const { data: allMsgs, error: mErr } = await supabase
+          .from('chat_messages')
+          .select('sender_id, receiver_id, content, created_at, type')
+          .or(`sender_id.eq.${tid},receiver_id.eq.${tid}`)
+          .order('created_at', { ascending: false })
+          .limit(200);
+
+        if (!mErr && allMsgs && allMsgs.length > 0) {
+          // Agrupa por outro participante (que n seja o professor)
+          const byStudent = new Map<string, any>();
+          for (const msg of allMsgs) {
+            const otherId = msg.sender_id === tid ? msg.receiver_id : msg.sender_id;
+            // Considera so o perfil de aluno, nao o professor
+            if (otherId === tid) continue;
+            if (!byStudent.has(otherId)) {
+              byStudent.set(otherId, msg);
+            }
+          }
+          // Transforma em array ordenado por created_at decrescente
+          const lastArr = Array.from(byStudent.entries())
+            .sort((a, b) => new Date(b[1].created_at).getTime() - new Date(a[1].created_at).getTime())
+            .slice(0, 3);
+
+          // Busca perfis dos alunos
+          const ids = lastArr.map(([sid]) => sid);
+          let profiles: any[] = [];
+          if (ids.length > 0) {
+            const { data: pRows } = await supabase
+              .from('profiles')
+              .select('id, full_name, avatar_url')
+              .in('id', ids);
+            profiles = pRows || [];
+          }
+
+          const result = lastArr.map(([sid, msg]) => {
+            const p = profiles.find((x: any) => x.id === sid);
+            let preview = String(msg.content || '');
+            if (msg.type && msg.type !== 'text') preview = '📎 Arquivo de mídia';
+            if (preview.length > 52) preview = preview.slice(0, 52) + '...';
+            const dt = new Date(msg.created_at);
+            const agora = new Date();
+            let timeStr = dt.toLocaleDateString('pt-BR');
+            const diffMs = Math.abs(agora.getTime() - dt.getTime());
+            const diffMin = Math.floor(diffMs / 60000);
+            if (diffMin < 1) timeStr = 'Agora';
+            else if (diffMin < 60) timeStr = `${diffMin} min atrás`;
+            else if (diffMin < 60 * 24) timeStr = `${Math.floor(diffMin / 60)} h atrás`;
+            else if (diffMin < 60 * 24 * 2) timeStr = 'Ontem';
+            return {
+              student_id: sid,
+              student_name: p?.full_name || 'Aluno',
+              avatar_url: p?.avatar_url || null,
+              last_time: timeStr,
+              message_preview: preview
+            };
+          });
+          setLastStudentMessages(result);
+        }
+      } catch (e) {
+        console.warn('Erro ultimas msgs:', e);
+      }
+    } catch (error) {
+      console.error('fetchDashboardStats geral:', error);
+    }
+  };
 
   const fetchAllModules = async () => {
     try {
@@ -589,6 +717,43 @@ export default function TeacherDashboard() {
     } catch (err) {
       console.error("Erro ao enviar mensagem:", err);
       alert("Erro ao enviar mensagem: " + (err as Error).message);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      const res = await fetch('http://localhost:8000/admin/delete-message', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message_id: messageId })
+      });
+      if (!res.ok) throw new Error('Falha ao excluir');
+      setMessages(prev => prev.filter(m => m.id !== messageId));
+    } catch (err) {
+      console.error('Erro ao excluir mensagem:', err);
+      alert('Erro ao excluir mensagem. Tente novamente.');
+    } finally {
+      setOpenMessageMenuId(null);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!teacherId || !selectedStudent) return;
+    if (!window.confirm('Deseja apagar TODO o histórico de chat com este aluno? Esta ação é irreversível.')) return;
+    setClearingChat(true);
+    try {
+      const res = await fetch('http://localhost:8000/admin/clear-chat', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacherId, student_id: selectedStudent.id })
+      });
+      if (!res.ok) throw new Error('Falha ao limpar chat');
+      setMessages([]);
+    } catch (err) {
+      console.error('Erro ao limpar chat:', err);
+      alert('Erro ao limpar chat. Tente novamente.');
+    } finally {
+      setClearingChat(false);
     }
   };
 
@@ -970,9 +1135,24 @@ export default function TeacherDashboard() {
         setPhone("");
         setSelectedInstruments([]);
         fetchStudents();
+      } else if (response.status === 409) {
+        try {
+          const data = await response.json();
+          alert(data?.detail || 'Este e-mail já está cadastrado.');
+        } catch {
+          alert('Este e-mail ou usuário já está cadastrado.');
+        }
+      } else {
+        try {
+          const data = await response.json();
+          alert(data?.detail || 'Erro ao criar aluno. Tente novamente.');
+        } catch {
+          alert('Erro ao criar aluno. Tente novamente.');
+        }
       }
     } catch (err) {
       console.error(err);
+      alert('Erro de conexão ao criar aluno. Verifique se o backend está rodando.');
     } finally {
       setLoading(false);
     }
@@ -1640,7 +1820,7 @@ export default function TeacherDashboard() {
                     <Users className="w-5 h-5 text-[#f97316]" />
                   </div>
                 </div>
-                <p className="text-2xl font-bold">48</p>
+                <p className="text-2xl font-bold">{activeStudentsCount}</p>
                 <p className="text-xs text-zinc-500 mt-1">Alunos Ativos</p>
               </div>
               <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
@@ -1655,10 +1835,10 @@ export default function TeacherDashboard() {
               <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div className="w-10 h-10 rounded-xl bg-[#ef4444]/10 flex items-center justify-center">
-                    <MessageCircle className="w-5 h-5 text-[#ef4444]" />
+                    <Clock className="w-5 h-5 text-[#ef4444]" />
                   </div>
                 </div>
-                <p className="text-2xl font-bold">7</p>
+                <p className="text-2xl font-bold">{pendingExercisesCount}</p>
                 <p className="text-xs text-zinc-500 mt-1">Treinos Pendentes</p>
               </div>
             </div>
@@ -1668,33 +1848,101 @@ export default function TeacherDashboard() {
               <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
                 <h3 className="font-bold mb-4">Últimas Mensagens</h3>
                 <div className="space-y-3">
-                  {students.slice(0, 3).map((student) => (
-                    <div key={student.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer" onClick={() => { setActiveTab('alunos'); setSelectedStudent(student); }}>
-                      <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800">
-                        <img src={student.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`} alt={student.full_name} className="w-full h-full object-cover" />
+                  {lastStudentMessages.length > 0 ? (
+                    lastStudentMessages.map((row) => {
+                      const student = students.find((s) => s.id === row.student_id);
+                      return (
+                        <div
+                          key={row.student_id}
+                          className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                          onClick={() => {
+                            setActiveTab('alunos');
+                            if (student) {
+                              setSelectedStudent(student);
+                            } else {
+                              // Carrega aluno pelo ID via busca ou fallback: navega para lista
+                              const foundFull = students.find((s: any) => s.id === row.student_id);
+                              if (foundFull) setSelectedStudent(foundFull);
+                            }
+                          }}
+                        >
+                          <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800 flex-shrink-0">
+                            <img
+                              src={row.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${row.student_name}`}
+                              alt={row.student_name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-bold truncate">{row.student_name}</p>
+                              <span className="text-[0.6875rem] text-zinc-500 whitespace-nowrap">{row.last_time}</span>
+                            </div>
+                            <p className="text-xs text-zinc-500 truncate">{row.message_preview}</p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : students.length > 0 ? (
+                    students.slice(0, 3).map((student) => (
+                      <div
+                        key={student.id}
+                        className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                        onClick={() => { setActiveTab('alunos'); setSelectedStudent(student); }}
+                      >
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800">
+                          <img
+                            src={student.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${student.full_name}`}
+                            alt={student.full_name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate">{student.full_name}</p>
+                          <p className="text-xs text-zinc-500">Aguardando primeira mensagem</p>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate">{student.full_name}</p>
-                        <p className="text-xs text-zinc-500">Última conversa: Hoje</p>
-                      </div>
+                    ))
+                  ) : (
+                    <div className="p-8 flex flex-col items-center justify-center text-center">
+                      <MessageCircle className="w-8 h-8 text-zinc-700 mb-2" />
+                      <p className="text-sm text-zinc-500">Nenhuma mensagem ainda</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
               <div className="bg-zinc-900/40 rounded-2xl border border-white/5 p-5">
                 <h3 className="font-bold mb-4">Cursos Recentes</h3>
                 <div className="space-y-3">
-                  {courses.slice(0, 3).map((course) => (
-                    <div key={course.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer" onClick={() => { setActiveTab('cursos'); setSelectedCourse(course); }}>
-                      <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
-                        <BookOpen className="w-5 h-5 text-zinc-400" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate">{course.name}</p>
-                        <p className="text-xs text-zinc-500">Criado em {new Date(course.created_at).toLocaleDateString()}</p>
-                      </div>
+                  {courses.length > 0 ? (
+                    [...courses]
+                      .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+                      .slice(0, 3)
+                      .map((course: any) => (
+                        <div
+                          key={course.id}
+                          className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
+                          onClick={() => { setActiveTab('cursos'); setSelectedCourse(course); }}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center">
+                            <BookOpen className="w-5 h-5 text-zinc-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold truncate">{course.name}</p>
+                            <p className="text-xs text-zinc-500">
+                              {course.created_at
+                                ? `Criado em ${new Date(course.created_at).toLocaleDateString('pt-BR')}`
+                                : 'Curso ativo'}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="p-8 flex flex-col items-center justify-center text-center">
+                      <BookOpen className="w-8 h-8 text-zinc-700 mb-2" />
+                      <p className="text-sm text-zinc-500">Nenhum curso cadastrado</p>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             </div>
@@ -2152,11 +2400,11 @@ export default function TeacherDashboard() {
                   <div className="flex flex-wrap gap-3">
                     <div className="px-3 py-1.5 rounded-full bg-[#22c55e]/10 border border-[#22c55e]/20 flex items-center gap-2">
                       <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-                      <span className="text-[0.6875rem] font-bold text-[#22c55e]">Alunos Ativos: 48</span>
+                      <span className="text-[0.6875rem] font-bold text-[#22c55e]">Alunos Ativos: {activeStudentsCount}</span>
                     </div>
                     <div className="px-3 py-1.5 rounded-full bg-[#f97316]/10 border border-[#f97316]/20 flex items-center gap-2">
-                      <MessageCircle className="w-3.5 h-3.5 text-[#f97316]" />
-                      <span className="text-[0.6875rem] font-bold text-[#f97316]">Treinos Pendentes: 7</span>
+                      <Clock className="w-3.5 h-3.5 text-[#f97316]" />
+                      <span className="text-[0.6875rem] font-bold text-[#f97316]">Treinos Pendentes: {pendingExercisesCount}</span>
                     </div>
                   </div>
                 </div>
@@ -2188,11 +2436,21 @@ export default function TeacherDashboard() {
               {/* Chat View */}
               {viewMode === 'chat' && (
                 <div className="flex-1 flex flex-col relative bg-[#050505]">
-                  <div className="p-4 border-b border-white/5 flex items-center gap-3 bg-[#0d0d0d]/20">
-                    <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800">
-                      <img src={selectedStudent.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedStudent.full_name}`} alt={selectedStudent.full_name} className="w-full h-full object-cover" />
+                  <div className="p-4 border-b border-white/5 flex items-center justify-between gap-3 bg-[#0d0d0d]/20">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 flex-shrink-0">
+                        <img src={selectedStudent.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedStudent.full_name}`} alt={selectedStudent.full_name} className="w-full h-full object-cover" />
+                      </div>
+                      <span className="font-bold text-sm truncate">{selectedStudent.full_name}</span>
                     </div>
-                    <span className="font-bold text-sm">{selectedStudent.full_name}</span>
+                    <button
+                      onClick={handleClearChat}
+                      disabled={clearingChat}
+                      className="px-3 py-1.5 rounded-full border border-red-500/30 text-red-500 text-[0.6875rem] font-bold active:scale-95 transition-transform hover:bg-red-500/10 disabled:opacity-50 flex items-center gap-1 flex-shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {clearingChat ? 'Limpando...' : 'Limpar Chat'}
+                    </button>
                   </div>
                   
                   <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
@@ -2200,14 +2458,47 @@ export default function TeacherDashboard() {
                       console.log('Renderizando mensagem:', msg);
                       const isMe = msg.sender_id === teacherId;
                       const mediaUrl = (msg as any).media_url || msg.content;
+                      const menuOpen = openMessageMenuId === msg.id;
                       return (
-                        <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
+                        <div key={msg.id} className={cn("flex flex-col group relative", isMe ? "items-end" : "items-start")}>
+                          {/* Menu dropdown da mensagem */}
+                          {menuOpen && (
+                            <div
+                              ref={messageMenuRef}
+                              className={cn(
+                                "absolute z-30 top-0 bg-zinc-800 border border-white/10 rounded-xl shadow-2xl overflow-hidden w-40",
+                                isMe ? "right-0 -translate-y-full -mt-2" : "left-0 -translate-y-full -mt-2"
+                              )}
+                            >
+                              <button
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="w-full px-4 py-2.5 text-left text-[0.75rem] font-bold text-red-500 hover:bg-red-500/10 flex items-center gap-2"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Excluir mensagem
+                              </button>
+                            </div>
+                          )}
                           <div className={cn(
                             "max-w-[85%] md:max-w-[70%] px-4 py-3 rounded-2xl relative",
                             isMe 
                               ? "bg-zinc-700 text-white rounded-tr-none" 
                               : "bg-zinc-800 border border-zinc-700 text-white rounded-tl-none"
                           )}>
+                            {/* Botão 3 pontos visível no hover (professor pode excluir QUALQUER mensagem) */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMessageMenuId(menuOpen ? null : msg.id);
+                              }}
+                              className={cn(
+                                "absolute top-2 p-1 rounded-md transition-all opacity-0 group-hover:opacity-100 hover:bg-white/10",
+                                isMe ? "-left-8" : "-right-8"
+                              )}
+                              title="Opções"
+                            >
+                              <MoreVertical className="w-3.5 h-3.5 text-zinc-500" />
+                            </button>
                             {msg.type === 'video' && (
                               <div className="flex flex-col gap-2 min-w-[14rem] mb-2">
                                 <video 
@@ -2247,22 +2538,6 @@ export default function TeacherDashboard() {
                   <div className="p-4 md:p-6 bg-gradient-to-t from-black to-transparent relative">
                     <div className="relative max-w-4xl mx-auto">
                       <div className="relative flex items-center gap-2 bg-zinc-900/90 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl">
-                        {/* Hidden file input */}
-                        <input 
-                          type="file" 
-                          id="file-upload" 
-                          className="hidden" 
-                          onChange={handleFileSelect}
-                          accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
-                        />
-                        
-                        <button 
-                          onClick={() => document.getElementById('file-upload')?.click()}
-                          className="p-2 md:p-3 text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
-                        </button>
-                        
                         <input 
                           type="text"
                           placeholder="Digite sua mensagem..."

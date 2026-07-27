@@ -328,23 +328,6 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
       {/* Input Area */}
       <div className="px-4 pb-8 pt-2 bg-black w-full relative">
         <div className="flex items-center gap-3">
-          {/* Hidden file input */}
-          <input 
-            type="file" 
-            id="chat-file-upload" 
-            className="hidden" 
-            onChange={handleFileSelect}
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
-          />
-          
-          {/* Clip Icon */}
-          <button 
-            onClick={() => document.getElementById('chat-file-upload')?.click()}
-            className="p-2 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
-          >
-            <Paperclip className="w-6 h-6" />
-          </button>
-
           {/* Main Input Field */}
           <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-white/5 rounded-full px-4 py-2.5 shadow-inner group focus-within:border-[#22c55e]/50 transition-all">
             <input

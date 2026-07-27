@@ -11,7 +11,8 @@ import {
   Filter, 
   X,
   Circle,
-  Play
+  Play,
+  Trash2
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
@@ -32,6 +33,79 @@ interface Module {
   lessons: LessonSubmission[];
 }
 
+type InstrumentKey = 'guitarra' | 'violao' | 'teclado' | 'piano' | 'bateria' | 'baixo' | 'ukulele' | 'canto' | 'outro';
+
+const instrumentMeta: Record<InstrumentKey, { emoji: string; label: string; gradient: string; bgImage: string }> = {
+  guitarra: {
+    emoji: '🎸',
+    label: 'Guitarra',
+    gradient: 'from-[#ef4444]/30 via-[#f97316]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800&auto=format&fit=crop&q=70'
+  },
+  violao: {
+    emoji: '🪕',
+    label: 'Violão',
+    gradient: 'from-[#b45309]/30 via-[#d97706]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1525201548942-d8732f6617a0?w=800&auto=format&fit=crop&q=70'
+  },
+  teclado: {
+    emoji: '🎹',
+    label: 'Teclado',
+    gradient: 'from-[#2563eb]/30 via-[#0891b2]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?w=800&auto=format&fit=crop&q=70'
+  },
+  piano: {
+    emoji: '🎹',
+    label: 'Piano',
+    gradient: 'from-[#2563eb]/30 via-[#0891b2]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?w=800&auto=format&fit=crop&q=70'
+  },
+  bateria: {
+    emoji: '🥁',
+    label: 'Bateria',
+    gradient: 'from-[#7c3aed]/30 via-[#9333ea]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1519892300165-cb5542fb47c7?w=800&auto=format&fit=crop&q=70'
+  },
+  baixo: {
+    emoji: '🎸',
+    label: 'Baixo',
+    gradient: 'from-[#16a34a]/30 via-[#15803d]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1516924962500-2b4b3b99ea02?w=800&auto=format&fit=crop&q=70'
+  },
+  ukulele: {
+    emoji: '🎶',
+    label: 'Ukulele',
+    gradient: 'from-[#ca8a04]/30 via-[#a16207]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1607349913338-fca6f71f6d0b?w=800&auto=format&fit=crop&q=70'
+  },
+  canto: {
+    emoji: '🎤',
+    label: 'Canto',
+    gradient: 'from-[#db2777]/30 via-[#be185d]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=800&auto=format&fit=crop&q=70'
+  },
+  outro: {
+    emoji: '🎵',
+    label: 'Música',
+    gradient: 'from-[#0891b2]/30 via-[#0e7490]/20 to-transparent',
+    bgImage: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=800&auto=format&fit=crop&q=70'
+  }
+};
+
+const normalizeInstrument = (name: string): InstrumentKey => {
+  const key = String(name || '').toLowerCase().trim() as InstrumentKey;
+  if (instrumentMeta[key]) return key;
+  if (key.includes('viol') || key.includes('acústic') || key.includes('acustic')) return 'violao';
+  if (key.includes('guitarr') || key.includes('guitar')) return 'guitarra';
+  if (key.includes('teclad') || key.includes('keyboard')) return 'teclado';
+  if (key.includes('piano')) return 'piano';
+  if (key.includes('bater') || key.includes('drum')) return 'bateria';
+  if (key.includes('baix') || key.includes('bass')) return 'baixo';
+  if (key.includes('uke')) return 'ukulele';
+  if (key.includes('cant') || key.includes('vocal') || key.includes('voz')) return 'canto';
+  return 'outro';
+};
+
 export default function EnvioScreen({ studentId }: { studentId: string }) {
   const [openModules, setOpenModules] = useState<string[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
@@ -45,24 +119,24 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
   const [uploading, setUploading] = useState(false);
   const [viewExerciseModalOpen, setViewExerciseModalOpen] = useState(false);
   const [selectedExerciseForView, setSelectedExerciseForView] = useState<{ id: string; title: string; video_url: string | null } | null>(null);
+  const [primaryInstrument, setPrimaryInstrument] = useState<InstrumentKey>('guitarra');
   const exerciseVideoRef = useRef<HTMLVideoElement>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
+  const fetchData = async () => {
+    try {
+      setLoading(true);
 
-        // 0. Fetch Student Profile (ALL fields)
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', studentId)
-          .single();
-        
-        console.log('[DEBUG] Perfil completo do aluno:', profileData);
-        console.log('[DEBUG] Keys do perfil (EnvioScreen):', profileData ? Object.keys(profileData) : 'null');
-        console.log('[DEBUG] Campo instrument raw (EnvioScreen):', profileData?.instrument);
-        console.log('[DEBUG] Campo instruments raw (EnvioScreen):', (profileData as any)?.instruments);
+      // 0. Fetch Student Profile (ALL fields)
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', studentId)
+        .single();
+      
+      console.log('[DEBUG] Perfil completo do aluno:', profileData);
+      console.log('[DEBUG] Keys do perfil (EnvioScreen):', profileData ? Object.keys(profileData) : 'null');
+      console.log('[DEBUG] Campo instrument raw (EnvioScreen):', profileData?.instrument);
+      console.log('[DEBUG] Campo instruments raw (EnvioScreen):', (profileData as any)?.instruments);
         
         // Get instruments array from profile - column REAL is `instrument` (singular, string CSV)
         // `instruments` column DOES NOT EXIST on profiles table (PGRST204 historical error)
@@ -81,6 +155,10 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         }
         
         console.log('[DEBUG] Instrumentos do perfil do aluno:', studentInstruments);
+
+        // Define instrumento primario para banner dinamico
+        const firstInst = studentInstruments[0] || 'guitarra';
+        setPrimaryInstrument(normalizeInstrument(firstInst));
         
         // 0.5. Fetch all INSTRUMENTS (this is the correct table name - TeacherDashboard line 302 uses 'instruments')
         const { data: instrumentsData } = await supabase
@@ -191,8 +269,9 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
       } finally {
         setLoading(false);
       }
-    };
+  };
 
+  useEffect(() => {
     fetchData();
   }, [studentId]);
 
@@ -223,13 +302,11 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
     setUploadProgress(0);
 
     try {
-      // Create FormData
       const formData = new FormData();
       formData.append('video', selectedFile);
       formData.append('student_id', studentId);
       formData.append('lesson_id', selectedLessonForUpload.id);
 
-      // Simulate progress
       let progress = 0;
       const interval = setInterval(() => {
         progress += Math.random() * 10;
@@ -240,7 +317,6 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         setUploadProgress(Math.floor(progress));
       }, 200);
 
-      // Upload to backend
       const response = await fetch('http://localhost:8000/upload-exercise', {
         method: 'POST',
         body: formData
@@ -250,94 +326,8 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
       if (response.ok) {
         setUploadProgress(100);
-        // Refresh data
         setTimeout(async () => {
-          const { data: exercisesData } = await supabase
-            .from('exercises')
-            .select('*')
-            .eq('student_id', studentId)
-            .order('created_at', { ascending: false });
-          if (exercisesData && exercisesData.length > 0) {
-            setLastVideo({ thumbnail: exercisesData[0].thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400" });
-          }
-          // Refresh student profile and instrument IDs
-          const { data: refreshProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', studentId)
-            .single();
-          
-          let refreshInstruments: string[] = [];
-          if (refreshProfile?.instrument) {
-            refreshInstruments = String(refreshProfile.instrument || '')
-              .split(',')
-              .map(i => i.trim().toLowerCase())
-              .filter(i => i.length > 0);
-          }
-          // FALLBACK: if empty, default to ['Guitarra']
-          if (refreshInstruments.length === 0) {
-            refreshInstruments = ['guitarra'];
-            console.log('[DEBUG] Fallback refresh: instrumentos vazios, usando Guitarra (EnvioScreen)');
-          }
-          
-          console.log('[DEBUG] Instrumentos após refresh (EnvioScreen):', refreshInstruments);
-          
-          const { data: refreshInstrumentsData } = await supabase
-            .from('instruments')
-            .select('id, name');
-          const refreshInstrumentIds = (refreshInstrumentsData || [])
-            .filter(inst => refreshInstruments.includes(String(inst.name || '').toLowerCase()))
-            .map(inst => inst.id);
-          
-          console.log('[DEBUG] IDs de instrumentos após refresh (EnvioScreen):', refreshInstrumentIds);
-          
-          // Refresh modules FILTERED BY INSTRUMENT - NO FALLBACK
-          let modulesData: any = [];
-          if (refreshInstrumentIds.length > 0) {
-            const query = supabase
-              .from('modules')
-              .select('*, lessons(*)')
-              .order('order', { ascending: true })
-              .in('instrument_id', refreshInstrumentIds);
-            const result = await query;
-            modulesData = result.data || [];
-          }
-          // Double client-side filter for safety
-          modulesData = (modulesData || []).filter((mod: any) => 
-            refreshInstrumentIds.includes(mod.instrument_id)
-          );
-          
-          const { data: accessData } = await supabase
-            .from('student_lessons')
-            .select('*')
-            .eq('student_id', studentId);
-          if (modulesData) {
-            const assembledModules: Module[] = modulesData.map((mod: any) => {
-              const moduleLessons = mod.lessons.map((lesson: any) => {
-                const access = accessData?.find((a: any) => a.lesson_id === lesson.id);
-                const exercise = exercisesData?.find((e: any) => e.lesson_id === lesson.id);
-                let status: LessonSubmission['status'] = 'locked';
-                if (access) {
-                  if (access.is_completed) status = 'completed';
-                  else if (exercise) status = 'awaiting-feedback';
-                  else if (!access.is_locked) status = 'not-submitted';
-                }
-                return { id: lesson.id, title: lesson.title, status, type: 'video', exercise_video_url: exercise?.video_url || null, exercise_thumbnail_url: exercise?.thumbnail_url || null };
-              });
-              const allCompleted = moduleLessons.every((l: any) => l.status === 'completed');
-              const allLocked = moduleLessons.every((l: any) => l.status === 'locked');
-              let modStatus: Module['status'] = 'pending';
-              if (allCompleted) modStatus = 'completed';
-              else if (allLocked) modStatus = 'locked';
-              return { id: mod.id, title: mod.title, status: modStatus, lessons: moduleLessons };
-            });
-            setModules(assembledModules);
-            const totalLessons = assembledModules.reduce((acc, m) => acc + m.lessons.length, 0);
-            const completedLessons = assembledModules.reduce((acc, m) => 
-              acc + m.lessons.filter(l => l.status === 'completed').length, 0
-            );
-            setProgress(totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0);
-          }
+          await fetchData();
           setUploadModalOpen(false);
           setSelectedFile(null);
           setSelectedLessonForUpload(null);
@@ -351,6 +341,22 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
     } finally {
       setUploading(false);
       setUploadProgress(0);
+    }
+  };
+
+  const handleDeleteExercise = async (lessonId: string) => {
+    if (!window.confirm('Deseja excluir este treino enviado?')) return;
+    try {
+      const response = await fetch('http://localhost:8000/admin/delete-exercise', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: studentId, lesson_id: lessonId })
+      });
+      if (!response.ok) throw new Error('Falha na exclusão');
+      await fetchData();
+    } catch (err) {
+      console.error('Erro ao excluir exercício:', err);
+      alert('Falha ao excluir o treino. Tente novamente.');
     }
   };
 
@@ -443,27 +449,51 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         </div>
       )}
 
-      {/* Header da Aba */}
-      <div className="px-4 py-6 flex items-center gap-4 border-b border-white/5">
-        <div className="w-20 h-14 rounded-xl overflow-hidden relative flex-shrink-0 bg-zinc-800">
-          {lastVideo ? (
-            <>
-              <img src={lastVideo.thumbnail} alt="Last Video" className="w-full h-full object-cover opacity-60" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Video className="w-6 h-6 text-zinc-500" />
-              </div>
-            </>
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <Video className="w-6 h-6 text-zinc-500" />
-            </div>
-          )}
+      {/* Banner Dinâmico por Instrumento */}
+      <div className="relative px-4 pt-6 pb-6 overflow-hidden border-b border-white/5">
+        <div className="absolute inset-0 -z-0">
+          <img
+            src={instrumentMeta[primaryInstrument].bgImage}
+            alt=""
+            className="w-full h-full object-cover opacity-20 scale-105"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+          <div className={cn(
+            "absolute inset-0 bg-gradient-to-br",
+            instrumentMeta[primaryInstrument].gradient
+          )} />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
         </div>
-        <div className="flex flex-col">
-          <h2 className="text-[1.125rem] font-bold text-white leading-tight">Meu Repositório de Exercícios</h2>
-          <div className="flex gap-2 mt-1">
-            <Video className="w-4 h-4 text-zinc-500" />
-            <Mic className="w-4 h-4 text-zinc-500" />
+
+        <div className="relative z-10 flex items-center gap-5">
+          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-white/10 to-white/5 border border-white/15 backdrop-blur-md flex items-center justify-center shadow-2xl flex-shrink-0 overflow-hidden">
+            <span className="text-[3.5rem] leading-none drop-shadow-lg">
+              {instrumentMeta[primaryInstrument].emoji}
+            </span>
+          </div>
+          <div className="flex flex-col flex-1 min-w-0">
+            <span className="text-[0.6875rem] font-black uppercase tracking-widest text-zinc-400 mb-1">
+              Exercícios de {instrumentMeta[primaryInstrument].label}
+            </span>
+            <h2 className="text-[1.375rem] font-extrabold text-white leading-tight">
+              Meu Repositório de Exercícios
+            </h2>
+            <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center gap-1.5">
+                <Video className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="text-[0.75rem] text-zinc-400">Vídeos</span>
+              </div>
+              <span className="w-1 h-1 rounded-full bg-zinc-700" />
+              <div className="flex items-center gap-1.5">
+                <Mic className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="text-[0.75rem] text-zinc-400">Áudios</span>
+              </div>
+              <span className="w-1 h-1 rounded-full bg-zinc-700" />
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-[#22c55e]" />
+                <span className="text-[0.75rem] text-[#22c55e] font-bold">{progress}%</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -566,6 +596,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                           >
                             Reenviar
                           </button>
+                          <button
+                            onClick={() => handleDeleteExercise(lesson.id)}
+                            className="w-8 h-8 rounded-full border border-red-500/30 text-red-500 flex items-center justify-center active:scale-95 transition-transform hover:bg-red-500/10"
+                            title="Excluir treino enviado"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       ) : (
                         <CheckCircle2 className="w-5 h-5 text-[#22c55e]" />
@@ -590,6 +627,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                             className="px-3 py-1.5 rounded-full border border-zinc-600 text-zinc-400 text-[0.6875rem] font-bold active:scale-95 transition-transform hover:border-zinc-500 hover:text-zinc-300"
                           >
                             Reenviar
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExercise(lesson.id)}
+                            className="w-8 h-8 rounded-full border border-red-500/30 text-red-500 flex items-center justify-center active:scale-95 transition-transform hover:bg-red-500/10"
+                            title="Excluir treino enviado"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       )}

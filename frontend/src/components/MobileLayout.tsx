@@ -1,7 +1,8 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import Logo from "./Logo";
+import { TabNavigationProvider, TabId } from "./TabNavigationContext";
 
 const TABS = [
   { id: "chat", label: "Chat" },
@@ -44,6 +45,15 @@ export default function MobileLayout({
     const nextTab = activeTab + newDirection;
     if (nextTab >= 0 && nextTab < TABS.length) {
       setPage([nextTab, newDirection]);
+    }
+  };
+
+  const goToTab = (tabId: string) => {
+    const idx = TABS.findIndex(t => t.id === tabId);
+    if (idx < 0) return;
+    if (idx !== activeTab) {
+      const newDirection = idx > activeTab ? 1 : -1;
+      setPage([idx, newDirection]);
     }
   };
 
@@ -135,9 +145,11 @@ export default function MobileLayout({
             onDragEnd={handleDragEnd}
             className="absolute inset-0 w-full h-full"
           >
-            <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col">
-              {getTabContent(activeTab)}
-            </div>
+            <TabNavigationProvider value={{ navigateToTab: (t: TabId) => goToTab(t) }}>
+              <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col">
+                {getTabContent(activeTab)}
+              </div>
+            </TabNavigationProvider>
           </motion.div>
         </AnimatePresence>
       </div>

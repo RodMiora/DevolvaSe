@@ -128,16 +128,24 @@ class LessonFeedbackRequest(BaseModel):
 async def create_student(student: StudentCreate):
     try:
         internal_email = f"{student.username.lower()}@devolvase.app"
-        auth_response = supabase_admin.auth.admin.create_user({
-            "email": internal_email,
-            "password": student.password,
-            "user_metadata": {
-                "full_name": student.full_name,
-                "username": student.username,
-                "role": "student"
-            },
-            "email_confirm": True
-        });
+        
+        # 1. Tenta criar usuario no Auth. Se ja existe -> erro amigavel
+        try:
+            auth_response = supabase_admin.auth.admin.create_user({
+                "email": internal_email,
+                "password": student.password,
+                "user_metadata": {
+                    "full_name": student.full_name,
+                    "username": student.username,
+                    "role": "student"
+                },
+                "email_confirm": True
+            });
+        except Exception as auth_e:
+            auth_msg = str(auth_e).lower()
+            if 'already registered' in auth_msg or 'already exists' in auth_msg or 'email' in auth_msg and 'exists' in auth_msg:
+                raise HTTPException(status_code=409, detail="Este usuario/email ja esta cadastrado")
+            raise auth_e
         
         if not auth_response.user:
             raise HTTPException(status_code=400, detail="Erro ao criar usuário no Auth")
@@ -148,18 +156,44 @@ async def create_student(student: StudentCreate):
             "id": user_id,
             "full_name": student.full_name,
             "role": "student",
-            "instrument": instruments_str,
-            "phone": student.phone
+            "instrument": instruments_str
         }
+        # Trata phone como OPCIONAL: só inclui se veio preenchido
+        if student.phone and str(student.phone).strip():
+            profile_data["phone"] = student.phone
         
-        # Inserir na tabela profiles e garantir que o role seja student
-        result = supabase_admin.table('profiles').insert(profile_data).execute()
+        # Inserir na tabela profiles com tratamento de coluna inexistente
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        
+        def sync_insert_profile():
+            try:
+                return supabase_admin.table('profiles').insert(profile_data).execute()
+            except Exception as profile_err:
+                err_msg = str(profile_err).lower()
+                # Se a coluna phone nao existir, tenta sem ela
+                if "phone" in profile_data and ('column "phone"' in err_msg or 'phone' in err_msg and 'exist' in err_msg):
+                    print(f"[AVISO create-student] Coluna phone nao existe na tabela profiles. Inserindo sem telefone.")
+                    fallback = {k: v for k, v in profile_data.items() if k != "phone"}
+                    return supabase_admin.table('profiles').insert(fallback).execute()
+                raise profile_err
+        
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(ThreadPoolExecutor(), sync_insert_profile)
         print(f"✅ Perfil criado para {student.full_name}: {result}")
         
         return {"status": "success", "user_id": user_id}
         
+    except HTTPException as he:
+        # Repassa HTTPExceptions (inclui nosso 409 custom) sem alterar
+        raise he
     except Exception as e:
+        msg = str(e).lower()
         print(f"Erro ao criar aluno: {str(e)}")
+        if 'already registered' in msg or 'already exists' in msg or ('email' in msg and 'exists' in msg):
+            raise HTTPException(status_code=409, detail="Este e-mail ou usuario ja esta cadastrado")
+        if 'duplicate' in msg:
+            raise HTTPException(status_code=409, detail="Este usuario ja esta cadastrado")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/admin/students/{student_id}")
@@ -456,6 +490,164 @@ async def upload_exercise(
         # Limpeza
         if os.path.exists(temp_input): os.remove(temp_input)
         if os.path.exists(temp_output): os.remove(temp_output)
+
+class DeleteExerciseRequest(BaseModel):
+    exercise_id: Optional[str] = None
+    student_id: str
+    lesson_id: str
+
+@app.delete("/admin/delete-exercise")
+async def delete_exercise(req: DeleteExerciseRequest):
+    """Deleta um exercicio da tabela exercises e do R2, alem de resetar o status da student_lessons para unlocked."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        
+        def extract_r2_key(video_url: str) -> Optional[str]:
+            if not video_url:
+                return None
+            # Tenta extrair apos o dominio publico
+            if settings.R2_PUBLIC_URL and settings.R2_PUBLIC_URL in video_url:
+                return video_url.replace(settings.R2_PUBLIC_URL.rstrip('/') + '/', '')
+            # Fallback: endpoint URL S3
+            if settings.R2_ENDPOINT_URL and settings.R2_ENDPOINT_URL in video_url:
+                return video_url.replace(settings.R2_ENDPOINT_URL.rstrip('/') + '/' + settings.R2_BUCKET_NAME + '/', '')
+            # Ultimo fallback: o path apos .dev/
+            if '.dev/' in video_url:
+                return video_url.split('.dev/', 1)[1]
+            return None
+        
+        def sync_delete():
+            # 1. Encontra o exercise (por ID ou por student+lesson)
+            existing = None
+            if req.exercise_id:
+                r = supabase_admin.table('exercises').select('*').eq('id', req.exercise_id).execute()
+                if r.data and len(r.data) > 0:
+                    existing = r.data[0]
+            else:
+                r = supabase_admin.table('exercises').select('*').eq('student_id', req.student_id).eq('lesson_id', req.lesson_id).execute()
+                if r.data and len(r.data) > 0:
+                    existing = r.data[0]
+            
+            print(f"[DELETE-EXERCISE] Encontrado: {existing}")
+            
+            # 2. Tenta deletar do R2 (se existe video_url)
+            if existing and existing.get('video_url'):
+                key = extract_r2_key(existing['video_url'])
+                if key:
+                    try:
+                        s3_client.delete_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+                        print(f"[DELETE-EXERCISE] Removido do R2: {key}")
+                    except Exception as s3e:
+                        print(f"[DELETE-EXERCISE] Falha ao deletar do R2 (continuando): {s3e}")
+            
+            # 3. Deleta linha do banco
+            if existing:
+                del_where = supabase_admin.table('exercises').delete()
+                if req.exercise_id:
+                    del_where = del_where.eq('id', req.exercise_id)
+                else:
+                    del_where = del_where.eq('student_id', req.student_id).eq('lesson_id', req.lesson_id)
+                del_where.execute()
+                print(f"[DELETE-EXERCISE] Deletado do Supabase")
+            
+            # 4. Reseta status da student_lessons para unlocked (volta para "Liberada")
+            try:
+                sl_result = supabase_admin.table('student_lessons').update({
+                    'status': 'unlocked',
+                    'is_locked': False,
+                    'is_completed': False
+                }).eq('student_id', req.student_id).eq('lesson_id', req.lesson_id).execute()
+                print(f"[DELETE-EXERCISE] student_lessons resetado para unlocked: {sl_result.data}")
+            except Exception as sl_e:
+                err_msg = str(sl_e).lower()
+                if 'status' in err_msg and ('column' in err_msg or 'exist' in err_msg):
+                    print(f"[DELETE-EXERCISE] Coluna status nao existe em student_lessons. Resetando campos padroes.")
+                    try:
+                        supabase_admin.table('student_lessons').update({
+                            'is_locked': False,
+                            'is_completed': False
+                        }).eq('student_id', req.student_id).eq('lesson_id', req.lesson_id).execute()
+                    except Exception as sl_e2:
+                        print(f"[DELETE-EXERCISE] Falha no fallback de reset SL: {sl_e2}")
+                else:
+                    print(f"[DELETE-EXERCISE] Falha ao resetar student_lessons: {sl_e}")
+            
+            return {"deleted": True, "exercise_id": existing.get('id') if existing else None}
+        
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(ThreadPoolExecutor(), sync_delete)
+        return {"status": "success", **result}
+        
+    except Exception as e:
+        print(f"[ERRO DELETE-EXERCISE]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class DeleteMessageRequest(BaseModel):
+    message_id: str
+
+@app.delete("/admin/delete-message")
+async def delete_message(req: DeleteMessageRequest):
+    """Deleta uma mensagem do chat para ambos os lados (professor/aluno)."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        
+        def sync_delete():
+            # 1. Tenta buscar a mensagem para deletar arquivo midia (se houver)
+            get_result = supabase_admin.table('chat_messages').select('*').eq('id', req.message_id).execute()
+            msg = get_result.data[0] if (get_result.data and len(get_result.data) > 0) else None
+            
+            if msg and msg.get('type') in ('audio', 'video', 'image'):
+                url_to_delete = msg.get('media_url') or msg.get('content')
+                if url_to_delete:
+                    # Extrai key R2 de forma dual (public e endpoint)
+                    key = None
+                    if settings.R2_PUBLIC_URL and settings.R2_PUBLIC_URL in url_to_delete:
+                        key = url_to_delete.replace(settings.R2_PUBLIC_URL.rstrip('/') + '/', '')
+                    elif settings.R2_ENDPOINT_URL and settings.R2_ENDPOINT_URL in url_to_delete:
+                        key = url_to_delete.replace(settings.R2_ENDPOINT_URL.rstrip('/') + '/' + settings.R2_BUCKET_NAME + '/', '')
+                    elif '.dev/' in url_to_delete:
+                        key = url_to_delete.split('.dev/', 1)[1]
+                    if key:
+                        try:
+                            s3_client.delete_object(Bucket=settings.R2_BUCKET_NAME, Key=key)
+                            print(f"[DELETE-MESSAGE] Removido do R2: {key}")
+                        except Exception as s3e:
+                            print(f"[DELETE-MESSAGE] Falha R2 (continuando): {s3e}")
+            
+            result = supabase_admin.table('chat_messages').delete().eq('id', req.message_id).execute()
+            print(f"[DELETE-MESSAGE] Deletado: {req.message_id} - {result}")
+            return True
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(ThreadPoolExecutor(), sync_delete)
+        return {"status": "success"}
+    except Exception as e:
+        print(f"[ERRO DELETE-MESSAGE]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ClearChatRequest(BaseModel):
+    teacher_id: str
+    student_id: str
+
+@app.delete("/admin/clear-chat")
+async def clear_chat(req: ClearChatRequest):
+    """Apaga todo o historico de chat entre professor e aluno."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio
+        def sync_clear():
+            or_filter = f"and(sender_id.eq.{req.teacher_id},receiver_id.eq.{req.student_id}),and(sender_id.eq.{req.student_id},receiver_id.eq.{req.teacher_id})"
+            result = supabase_admin.table('chat_messages').delete().or_(or_filter).execute()
+            print(f"[CLEAR-CHAT] {req.teacher_id} <-> {req.student_id}: deletadas {len(result.data or [])} msgs")
+            return len(result.data or [])
+        loop = asyncio.get_running_loop()
+        deleted = await loop.run_in_executor(ThreadPoolExecutor(), sync_clear)
+        return {"status": "success", "deleted_count": deleted}
+    except Exception as e:
+        print(f"[ERRO CLEAR-CHAT]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload-audio")
 async def upload_audio(
