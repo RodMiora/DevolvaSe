@@ -35,6 +35,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
 interface Student {
   id: string;
   full_name: string;
@@ -722,7 +724,7 @@ export default function TeacherDashboard() {
 
   const handleDeleteMessage = async (messageId: string) => {
     try {
-      const res = await fetch('http://localhost:8000/admin/delete-message', {
+      const res = await fetch(`${API_BASE_URL}/admin/delete-message`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message_id: messageId })
@@ -770,7 +772,7 @@ export default function TeacherDashboard() {
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-chat-file', {
+      const response = await fetch(`${API_BASE_URL}/upload-chat-file`, {
         method: 'POST',
         body: formData
       });
@@ -967,7 +969,7 @@ export default function TeacherDashboard() {
     if (!selectedStudent) return;
     setApprovingLesson(true);
     try {
-      const response = await fetch('http://localhost:8000/admin/approve-lesson', {
+      const response = await fetch(`${API_BASE_URL}/admin/approve-lesson`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1059,7 +1061,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/admin/students/${studentId}`, {
+      const response = await fetch(`${API_BASE_URL}/admin/students/${studentId}`, {
         method: 'DELETE',
       });
 
@@ -1115,7 +1117,7 @@ export default function TeacherDashboard() {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/admin/create-student', {
+      const response = await fetch(`${API_BASE_URL}/admin/create-student`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1304,7 +1306,7 @@ export default function TeacherDashboard() {
 
     setDeletingLesson(true);
     try {
-      const response = await fetch(`http://localhost:8000/lessons/${lesson.id}`, {
+      const response = await fetch(`${API_BASE_URL}/lessons/${lesson.id}`, {
         method: 'DELETE'
       });
 
@@ -1340,7 +1342,7 @@ export default function TeacherDashboard() {
 
     setDeletingLesson(true); // Usamos o mesmo estado para loading
     try {
-      const response = await fetch(`http://localhost:8000/lessons/${editingLesson.id}`, {
+      const response = await fetch(`${API_BASE_URL}/lessons/${editingLesson.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -1381,7 +1383,7 @@ export default function TeacherDashboard() {
     setUploading(true);
     setUploadProgress(0);
 
-    const uploadUrl = 'http://localhost:8000/upload-lesson-video';
+    const uploadUrl = `${API_BASE_URL}/upload-lesson-video`;
     const formData = new FormData();
     formData.append('module_id', selectedModule);
     formData.append('title', videoTitle);

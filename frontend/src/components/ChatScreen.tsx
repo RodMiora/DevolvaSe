@@ -3,6 +3,8 @@ import { supabase } from '@/lib/supabase';
 import { Send, Paperclip, Mic, Play, Smile, CheckCheck } from 'lucide-react';
 import { cn } from "@/lib/utils";
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
 interface Message {
   id: string;
   sender_id: string;
@@ -84,7 +86,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     formData.append('file', file);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-chat-file', {
+      const response = await fetch(`${API_BASE_URL}/upload-chat-file`, {
         method: 'POST',
         body: formData
       });
@@ -156,7 +158,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     formData.append('audio', audioBlob, 'audio.webm');
 
     try {
-      const response = await fetch('http://localhost:8000/upload-audio', {
+      const response = await fetch(`${API_BASE_URL}/upload-audio`, {
         method: 'POST',
         body: formData
       });

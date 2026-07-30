@@ -17,6 +17,8 @@ import {
 import { cn } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
 interface LessonSubmission {
   id: string;
   title: string;
@@ -317,7 +319,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         setUploadProgress(Math.floor(progress));
       }, 200);
 
-      const response = await fetch('http://localhost:8000/upload-exercise', {
+      const response = await fetch(`${API_BASE_URL}/upload-exercise`, {
         method: 'POST',
         body: formData
       });
@@ -347,7 +349,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
   const handleDeleteExercise = async (lessonId: string) => {
     if (!window.confirm('Deseja excluir este treino enviado?')) return;
     try {
-      const response = await fetch('http://localhost:8000/admin/delete-exercise', {
+      const response = await fetch(`${API_BASE_URL}/admin/delete-exercise`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: studentId, lesson_id: lessonId })

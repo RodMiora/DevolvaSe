@@ -47,18 +47,28 @@ supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app = FastAPI()
 
 # CORS configuration
+frontend_url = os.getenv("FRONTEND_URL", "").strip()
+extra_origins = [o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()]
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.1.12:3000",
+    "https://devolva-se.vercel.app",
 ]
+if frontend_url and frontend_url not in origins:
+    origins.append(frontend_url)
+for origin in extra_origins:
+    if origin not in origins:
+        origins.append(origin)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 def get_ffmpeg_path():
