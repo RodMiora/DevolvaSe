@@ -16,8 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
-
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+import { apiFetch, apiAlert } from '@/lib/api';
 
 interface LessonSubmission {
   id: string;
@@ -319,10 +318,10 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         setUploadProgress(Math.floor(progress));
       }, 200);
 
-      const response = await fetch(`${API_BASE_URL}/upload-exercise`, {
+      const response = await apiFetch('/upload-exercise', {
         method: 'POST',
         body: formData
-      });
+      }, { prefix: 'Falha ao enviar vídeo', jsonBody: false, bearer: true, throwOnError: false });
 
       clearInterval(interval);
 
@@ -335,30 +334,36 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
           setSelectedLessonForUpload(null);
         }, 500);
       } else {
-        throw new Error('Upload failed');
+        const t = await response.text().catch(() => '');
+        let detail = '';
+        try {
+          const j = JSON.parse(t || '{}');
+          detail = j?.detail ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : '';
+        } catch {}
+        const msg = `Falha ao enviar vídeo — HTTP ${response.status}${response.statusText ? ` (${response.statusText})` : ''}${detail ? ' | ' + detail : ''}`;
+        console.error('Upload exercise failed:', msg);
+        alert(msg);
       }
     } catch (error) {
       console.error('Error uploading:', error);
-      alert('Falha ao enviar vídeo');
+      apiAlert('Falha ao enviar vídeo', error);
     } finally {
       setUploading(false);
-      setUploadProgress(0);
+      if (!uploadModalOpen) setUploadProgress(0);
     }
   };
 
   const handleDeleteExercise = async (lessonId: string) => {
     if (!window.confirm('Deseja excluir este treino enviado?')) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/delete-exercise`, {
+      await apiFetch('/admin/delete-exercise', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: studentId, lesson_id: lessonId })
-      });
-      if (!response.ok) throw new Error('Falha na exclusão');
+      }, { prefix: 'Falha ao excluir o treino', jsonBody: true, bearer: true });
       await fetchData();
     } catch (err) {
       console.error('Erro ao excluir exercício:', err);
-      alert('Falha ao excluir o treino. Tente novamente.');
+      apiAlert('Falha ao excluir o treino', err);
     }
   };
 

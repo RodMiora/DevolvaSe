@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Send, Paperclip, Mic, Play, Smile, CheckCheck } from 'lucide-react';
 import { cn } from "@/lib/utils";
-
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+import { apiFetch, apiAlert } from '@/lib/api';
 
 interface Message {
   id: string;
@@ -86,16 +85,13 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/upload-chat-file`, {
+      const response = await apiFetch('/upload-chat-file', {
         method: 'POST',
         body: formData
-      });
+      }, { prefix: 'Não foi possível enviar o arquivo no chat', jsonBody: false, bearer: true });
 
-      if (!response.ok) throw new Error('Erro no upload do arquivo');
-      
       const result = await response.json();
       
-      // Determine message type based on file type
       let messageType: 'audio' | 'video' | 'text' = 'text';
       if (file.type.startsWith('video/')) {
         messageType = 'video';
@@ -103,7 +99,6 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
         messageType = 'audio';
       }
 
-      // Save message to Supabase
       await supabase.from('chat_messages').insert({
         sender_id: userId,
         receiver_id: '54268554-9b11-4986-9c02-c1637b0863fc',
@@ -114,6 +109,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
       });
     } catch (err) {
       console.error('Erro ao enviar arquivo:', err);
+      apiAlert('Não foi possível enviar o arquivo no chat', err);
     }
   };
 
@@ -158,16 +154,13 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     formData.append('audio', audioBlob, 'audio.webm');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/upload-audio`, {
+      const response = await apiFetch('/upload-audio', {
         method: 'POST',
         body: formData
-      });
+      }, { prefix: 'Não foi possível enviar o áudio', jsonBody: false, bearer: true });
 
-      if (!response.ok) throw new Error('Erro no upload do áudio');
-      
       const result = await response.json();
 
-      // Save message to Supabase
       await supabase.from('chat_messages').insert({
         sender_id: userId,
         receiver_id: '54268554-9b11-4986-9c02-c1637b0863fc',
@@ -178,6 +171,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
       });
     } catch (err) {
       console.error('Erro ao enviar áudio:', err);
+      apiAlert('Não foi possível enviar o áudio', err);
     }
   };
 

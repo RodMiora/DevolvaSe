@@ -34,8 +34,7 @@ import {
   Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+import { API_BASE_URL, apiFetch, apiAlert, getApiBearerToken } from "@/lib/api";
 
 interface Student {
   id: string;
@@ -724,16 +723,14 @@ export default function TeacherDashboard() {
 
   const handleDeleteMessage = async (messageId: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/delete-message`, {
+      await apiFetch('/admin/delete-message', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message_id: messageId })
-      });
-      if (!res.ok) throw new Error('Falha ao excluir');
+      }, { prefix: 'Não foi possível excluir a mensagem', jsonBody: true, bearer: true });
       setMessages(prev => prev.filter(m => m.id !== messageId));
     } catch (err) {
       console.error('Erro ao excluir mensagem:', err);
-      alert('Erro ao excluir mensagem. Tente novamente.');
+      apiAlert('Não foi possível excluir a mensagem', err);
     } finally {
       setOpenMessageMenuId(null);
     }
@@ -744,16 +741,14 @@ export default function TeacherDashboard() {
     if (!window.confirm('Deseja apagar TODO o histórico de chat com este aluno? Esta ação é irreversível.')) return;
     setClearingChat(true);
     try {
-      const res = await fetch('http://localhost:8000/admin/clear-chat', {
+      await apiFetch('/admin/clear-chat', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_id: teacherId, student_id: selectedStudent.id })
-      });
-      if (!res.ok) throw new Error('Falha ao limpar chat');
+      }, { prefix: 'Não foi possível limpar o chat', jsonBody: true, bearer: true });
       setMessages([]);
     } catch (err) {
       console.error('Erro ao limpar chat:', err);
-      alert('Erro ao limpar chat. Tente novamente.');
+      apiAlert('Não foi possível limpar o chat', err);
     } finally {
       setClearingChat(false);
     }
@@ -772,16 +767,13 @@ export default function TeacherDashboard() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/upload-chat-file`, {
+      const response = await apiFetch('/upload-chat-file', {
         method: 'POST',
         body: formData
-      });
+      }, { prefix: 'Não foi possível enviar o arquivo no chat', jsonBody: false, bearer: true });
 
-      if (!response.ok) throw new Error('Erro no upload do arquivo');
-      
       const result = await response.json();
       
-      // Determine message type based on file type
       let messageType: 'audio' | 'video' | 'text' = 'text';
       if (file.type.startsWith('video/')) {
         messageType = 'video';
@@ -789,7 +781,6 @@ export default function TeacherDashboard() {
         messageType = 'audio';
       }
 
-      // Save message to Supabase
       await supabase.from('chat_messages').insert({
         sender_id: user.id,
         receiver_id: selectedStudent.id,
@@ -800,6 +791,7 @@ export default function TeacherDashboard() {
       });
     } catch (err) {
       console.error('Erro ao enviar arquivo:', err);
+      apiAlert('Não foi possível enviar o arquivo no chat', err);
     }
   };
 
@@ -849,16 +841,13 @@ export default function TeacherDashboard() {
     formData.append('audio', audioBlob, 'audio.webm');
 
     try {
-      const response = await fetch('http://localhost:8000/upload-audio', {
+      const response = await apiFetch('/upload-audio', {
         method: 'POST',
         body: formData
-      });
+      }, { prefix: 'Não foi possível enviar o áudio', jsonBody: false, bearer: true });
 
-      if (!response.ok) throw new Error('Erro no upload do áudio');
-      
       const result = await response.json();
 
-      // Save message to Supabase
       await supabase.from('chat_messages').insert({
         sender_id: user.id,
         receiver_id: selectedStudent.id,
@@ -869,6 +858,7 @@ export default function TeacherDashboard() {
       });
     } catch (err) {
       console.error('Erro ao enviar áudio:', err);
+      apiAlert('Não foi possível enviar o áudio', err);
     }
   };
 
@@ -938,30 +928,25 @@ export default function TeacherDashboard() {
 
   const toggleLessonLock = async (lessonId: string, currentLocked: boolean) => {
     if (!selectedStudent) return;
-
     try {
-      const response = await fetch('http://localhost:8000/admin/toggle-lesson-lock', {
+      const response = await apiFetch('/admin/toggle-lesson-lock', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           student_id: selectedStudent.id,
           lesson_id: lessonId,
           unlocked: currentLocked
         })
-      });
-
+      }, { prefix: 'Não foi possível liberar/bloquear a aula', jsonBody: true, bearer: true });
       if (response.ok) {
         const newStatus = currentLocked ? 'unlocked' : 'locked';
         setModules(prev => prev.map(mod => ({
           ...mod,
           lessons: (mod.lessons || []).map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked, is_completed: false, status: newStatus } : l)
         })));
-      } else {
-        throw new Error('Falha ao alterar estado da aula');
       }
     } catch (error) {
       console.error('Erro ao alterar estado da aula:', error);
-      alert('Erro ao alterar estado da aula');
+      apiAlert('Não foi possível liberar/bloquear a aula', error);
     }
   };
 
@@ -969,14 +954,13 @@ export default function TeacherDashboard() {
     if (!selectedStudent) return;
     setApprovingLesson(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/approve-lesson`, {
+      const response = await apiFetch('/admin/approve-lesson', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           student_id: selectedStudent.id,
           lesson_id: lesson.id
         })
-      });
+      }, { prefix: 'Não foi possível aprovar a aula', jsonBody: true, bearer: true });
 
       if (response.ok) {
         setModules(prev => prev.map(mod => ({
@@ -986,12 +970,10 @@ export default function TeacherDashboard() {
         if (selectedLessonForExercise?.id === lesson.id) {
           setSelectedLessonForExercise(prev => prev ? { ...prev, is_locked: false, is_completed: true, status: 'approved' } : null);
         }
-      } else {
-        throw new Error('Falha ao aprovar aula');
       }
     } catch (err) {
       console.error('Erro ao aprovar aula:', err);
-      alert('Erro ao aprovar aula');
+      apiAlert('Não foi possível aprovar a aula', err);
     } finally {
       setApprovingLesson(false);
     }
@@ -1004,14 +986,12 @@ export default function TeacherDashboard() {
       alert('Digite um comentario para o feedback');
       return;
     }
-    // Encontra o modulo ao qual esta aula pertence
     const parentModule = modules.find(mod => (mod.lessons || []).some(l => l.id === lesson.id));
     
     setSendingFeedback(true);
     try {
-      const response = await fetch('http://localhost:8000/admin/send-lesson-feedback', {
+      const response = await apiFetch('/admin/send-lesson-feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           teacher_id: teacherId,
           student_id: selectedStudent.id,
@@ -1021,35 +1001,24 @@ export default function TeacherDashboard() {
           exercise_video_url: lesson.exercise_video_url,
           feedback_text: text
         })
-      });
+      }, { prefix: 'Não foi possível enviar o feedback', jsonBody: true, bearer: true });
 
       if (response.ok) {
-        // 1. Limpa input
         setStudentExerciseFeedback("");
-        
-        // 2. Fecha modal e pausa video
         setShowStudentExerciseModal(false);
         if (exerciseTeacherVideoRef.current) { try { exerciseTeacherVideoRef.current.pause(); } catch (e) {} }
         setSelectedLessonForExercise(null);
-        
-        // 3. Muda para aba Chat do aluno
         setViewMode('chat');
-        
-        // 4. Força refresh do chat (pega a mensagem nova)
         await fetchMessages(selectedStudent.id);
-        
-        // 5. Garante scroll para o final (useEffect de messages tambem dispara, mas garantimos com timeout)
         setTimeout(() => {
           if (scrollRef.current) {
             scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
           }
         }, 150);
-      } else {
-        throw new Error('Falha ao enviar feedback');
       }
     } catch (err) {
       console.error('Erro ao enviar feedback:', err);
-      alert('Erro ao enviar feedback para o chat');
+      apiAlert('Não foi possível enviar o feedback', err);
     } finally {
       setSendingFeedback(false);
     }
@@ -1061,13 +1030,9 @@ export default function TeacherDashboard() {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/students/${studentId}`, {
+      await apiFetch(`/admin/students/${studentId}`, {
         method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error('Falha ao excluir aluno');
-      }
+      }, { prefix: 'Não foi possível excluir o aluno', bearer: true });
 
       fetchStudents();
       if (selectedStudent?.id === studentId) {
@@ -1075,7 +1040,7 @@ export default function TeacherDashboard() {
       }
     } catch (err) {
       console.error('Erro ao excluir aluno:', err);
-      alert('Erro ao excluir aluno. Tente novamente.');
+      apiAlert('Não foi possível excluir o aluno', err);
     }
   };
 
@@ -1084,28 +1049,21 @@ export default function TeacherDashboard() {
     if (!editingStudent) return;
 
     try {
-      const response = await fetch(`http://localhost:8000/admin/students/${editingStudent.id}`, {
+      await apiFetch(`/admin/students/${editingStudent.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           full_name: editStudentName,
           instruments: editSelectedInstruments,
           phone: editStudentPhone || null,
         }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Falha ao editar aluno');
-      }
+      }, { prefix: 'Não foi possível editar o aluno', jsonBody: true, bearer: true });
 
       setShowEditStudentModal(false);
       setEditingStudent(null);
       fetchStudents();
     } catch (err) {
       console.error('Erro ao editar aluno:', err);
-      alert('Erro ao editar aluno. Tente novamente.');
+      apiAlert('Não foi possível editar o aluno', err);
     }
   };
 
@@ -1117,9 +1075,8 @@ export default function TeacherDashboard() {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/create-student`, {
+      const response = await apiFetch('/admin/create-student', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: fullName,
           username: username.trim().toLowerCase(),
@@ -1127,7 +1084,7 @@ export default function TeacherDashboard() {
           instruments: selectedInstruments,
           phone: phone || null
         })
-      });
+      }, { prefix: 'Não foi possível cadastrar o aluno', jsonBody: true, bearer: true, throwOnError: false });
 
       if (response.ok) {
         setShowAddModal(false);
@@ -1147,14 +1104,14 @@ export default function TeacherDashboard() {
       } else {
         try {
           const data = await response.json();
-          alert(data?.detail || 'Erro ao criar aluno. Tente novamente.');
+          alert(data?.detail || `Erro ao criar aluno (HTTP ${response.status}).`);
         } catch {
-          alert('Erro ao criar aluno. Tente novamente.');
+          alert(`Erro ao criar aluno (HTTP ${response.status}).`);
         }
       }
     } catch (err) {
       console.error(err);
-      alert('Erro de conexão ao criar aluno. Verifique se o backend está rodando.');
+      apiAlert('Não foi possível cadastrar o aluno', err);
     } finally {
       setLoading(false);
     }
@@ -1306,24 +1263,18 @@ export default function TeacherDashboard() {
 
     setDeletingLesson(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/lessons/${lesson.id}`, {
+      await apiFetch(`/lessons/${lesson.id}`, {
         method: 'DELETE'
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erro ${response.status}: ${errorText}`);
-      }
+      }, { prefix: 'Não foi possível excluir a aula', bearer: true });
 
       console.log('Aula excluída com sucesso');
-      // Refresh course modules
       if (selectedCourse) {
         await fetchCourseModules(selectedCourse.id);
         fetchCourseVideos(selectedCourse.id);
       }
     } catch (err) {
       console.error('Erro ao excluir aula:', err);
-      alert('Erro ao excluir aula: ' + (err as Error).message);
+      apiAlert('Não foi possível excluir a aula', err);
     } finally {
       setDeletingLesson(false);
     }
@@ -1340,41 +1291,32 @@ export default function TeacherDashboard() {
     e.preventDefault();
     if (!editingLesson) return;
 
-    setDeletingLesson(true); // Usamos o mesmo estado para loading
+    setDeletingLesson(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/lessons/${editingLesson.id}`, {
+      await apiFetch(`/lessons/${editingLesson.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
         body: JSON.stringify({
           title: editLessonTitle,
           description: editLessonDescription
         })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erro ${response.status}: ${errorText}`);
-      }
+      }, { prefix: 'Não foi possível atualizar a aula', jsonBody: true, bearer: true });
 
       console.log('Aula atualizada com sucesso');
       setShowEditLessonModal(false);
       setEditingLesson(null);
-      // Refresh course modules
       if (selectedCourse) {
         await fetchCourseModules(selectedCourse.id);
         fetchCourseVideos(selectedCourse.id);
       }
     } catch (err) {
       console.error('Erro ao atualizar aula:', err);
-      alert('Erro ao atualizar aula: ' + (err as Error).message);
+      apiAlert('Não foi possível atualizar a aula', err);
     } finally {
       setDeletingLesson(false);
     }
   };
 
-  const handleUploadVideo = (e: React.FormEvent) => {
+  const handleUploadVideo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModule || !selectedVideoFile) return;
 
@@ -1390,14 +1332,19 @@ export default function TeacherDashboard() {
     formData.append('description', videoDescription);
     formData.append('video', selectedVideoFile);
 
+    const token = await getApiBearerToken();
+
     console.log('Iniciando XHR para o backend...', uploadUrl);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl);
+    xhr.withCredentials = true;
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
     
     let phase2Interval: any = null;
 
-    // Monitorar progresso do upload (Fase 1: 0-85%)
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
         const percentCompleted = Math.round((event.loaded / event.total) * 85);
@@ -1406,10 +1353,8 @@ export default function TeacherDashboard() {
       }
     };
 
-    // Quando o upload para o servidor for concluído (inicia Fase 2)
     xhr.upload.onloadend = () => {
       console.log('Upload para o servidor concluído. Iniciando Fase 2...');
-      // Animação suave para 85-99%
       let currentProgress = 85;
       phase2Interval = setInterval(() => {
         if (currentProgress < 99) {
@@ -1420,7 +1365,19 @@ export default function TeacherDashboard() {
       }, 300);
     };
 
-    // Quando a resposta do servidor chegar
+    const extractXhrDetail = (respText: string) => {
+      if (!respText) return '';
+      try {
+        const j = JSON.parse(respText);
+        if (j?.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+        if (j?.error) return typeof j.error === 'string' ? j.error : JSON.stringify(j.error);
+        if (j?.message) return typeof j.message === 'string' ? j.message : JSON.stringify(j.message);
+        return respText.slice(0, 260);
+      } catch {
+        return respText.slice(0, 260);
+      }
+    };
+
     xhr.onload = async () => {
       if (phase2Interval) clearInterval(phase2Interval);
       
@@ -1428,7 +1385,6 @@ export default function TeacherDashboard() {
         setUploadProgress(100);
         console.log('Fase 3: 100% - concluído!');
         
-        // Espera um momento para exibir o 100% antes de fechar o modal
         setTimeout(async () => {
           const data = JSON.parse(xhr.responseText);
           console.log('Vídeo enviado com sucesso:', data);
@@ -1438,7 +1394,6 @@ export default function TeacherDashboard() {
           setSelectedModule("");
           setSelectedVideoFile(null);
           setUploadProgress(0);
-          // Refresh course modules and videos
           if (selectedCourse) {
             await fetchCourseModules(selectedCourse.id);
             fetchCourseVideos(selectedCourse.id);
@@ -1446,18 +1401,20 @@ export default function TeacherDashboard() {
           setUploading(false);
         }, 500);
       } else {
+        const detail = extractXhrDetail(xhr.responseText);
+        const msg = `Não foi possível enviar o vídeo — HTTP ${xhr.status}${xhr.statusText ? ` (${xhr.statusText})` : ''}${detail ? ' | ' + detail : ''}`;
         console.error('Erro na resposta do servidor:', xhr.status, xhr.responseText);
-        alert(`Erro ao enviar vídeo: ${xhr.status} ${xhr.statusText}`);
+        alert(msg);
         setUploading(false);
         setUploadProgress(0);
       }
     };
 
-    // Em caso de erro
     xhr.onerror = () => {
       if (phase2Interval) clearInterval(phase2Interval);
       console.error('Erro na requisição XHR');
-      alert('Erro ao enviar vídeo. Verifique sua conexão.');
+      const detail = extractXhrDetail(xhr.responseText);
+      alert(`Não foi possível enviar o vídeo — falha de rede/CORS${detail ? ' | ' + detail : ''}`);
       setUploading(false);
       setUploadProgress(0);
     };

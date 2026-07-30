@@ -4,8 +4,9 @@ import boto3
 import uuid
 import tempfile
 from dotenv import load_dotenv  # NEW: import dotenv
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Path
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
@@ -46,7 +47,77 @@ supabase_admin: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 app = FastAPI()
 
-# CORS configuration
+
+def _is_trusted_origin(origin: Optional[str]) -> bool:
+    if not origin:
+        return False
+    o = origin.strip().lower()
+    if o.startswith("http://localhost") or o.startswith("http://127.0.0.1"):
+        return True
+    if o.startswith("http://192.168.") or o.startswith("http://10.") or o.startswith("http://172."):
+        return True
+    if o.endswith(".vercel.app") or o == "https://devolva-se.vercel.app":
+        return True
+    if o.endswith(".onrender.com"):
+        return True
+    if ".ngrok-free.app" in o or ".ngrok.app" in o or ".ngrok.io" in o:
+        return True
+    if o.startswith("capacitor://") or o.startswith("file://"):
+        return True
+    frontend_url = (os.getenv("FRONTEND_URL") or "").strip().lower()
+    if frontend_url and frontend_url == o:
+        return True
+    extra = [x.strip().lower() for x in (os.getenv("CORS_EXTRA_ORIGINS") or "").split(",") if x.strip()]
+    if o in extra:
+        return True
+    return False
+
+
+@app.middleware("http")
+async def cors_and_security_middleware(request: Request, call_next):
+    origin = request.headers.get("origin")
+    # Resposta para preflight OPTIONS (fallback, antes do CORSMiddleware atuar)
+    if request.method == "OPTIONS":
+        allowed_origin = origin if _is_trusted_origin(origin) else "*"
+        headers = {
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Origin, X-Requested-With, apikey, x-client-info, x-application-secret, Range",
+            "Access-Control-Expose-Headers": "Content-Length, Content-Type, Content-Range, ETag, Last-Modified",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "86400",
+            "Vary": "Origin",
+        }
+        return JSONResponse(status_code=204, content=None, headers=headers)
+
+    try:
+        response = await call_next(request)
+    except HTTPException as he:
+        detail = he.detail if isinstance(he.detail, (str, dict, list)) else str(he.detail)
+        response = JSONResponse(status_code=he.status_code, content={"detail": detail})
+    except Exception as e:
+        response = JSONResponse(status_code=500, content={"detail": str(e)})
+
+    # Aplica headers de segurança e CORS dinâmicos em todas as respostas
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer-when-downgrade"
+    response.headers["Vary"] = "Origin, Accept-Encoding"
+    if _is_trusted_origin(origin):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    else:
+        # Fallback publico (uploads de video podem ser acessados via player direto)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, Origin, X-Requested-With, apikey, x-client-info, x-application-secret, Range"
+    response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Content-Range, ETag, Last-Modified"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+
+# CORS configuration (camada secundaria — o middleware acima ja resolve preflight/dinamico,
+#  mas manter ele para manter Starlette/FastAPI path normalizacao e compatibilidade com uploads grandes)
 frontend_url = os.getenv("FRONTEND_URL", "").strip()
 extra_origins = [o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()]
 origins = [
@@ -64,11 +135,12 @@ for origin in extra_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*\.(vercel\.app|onrender\.com|ngrok\.app|ngrok-free\.app|ngrok\.io)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=86400,
 )
 
 def get_ffmpeg_path():
