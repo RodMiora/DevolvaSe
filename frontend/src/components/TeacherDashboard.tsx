@@ -359,34 +359,34 @@ export default function TeacherDashboard() {
           .limit(200);
 
         if (!mErr && allMsgs && allMsgs.length > 0) {
-          // Agrupa por outro participante (que n seja o professor)
-          const byStudent = new Map<string, any>();
-          for (const msg of allMsgs) {
-            const otherId = msg.sender_id === tid ? msg.receiver_id : msg.sender_id;
-            // Considera so o perfil de aluno, nao o professor
+          type ChatMsg = { sender_id?: string; receiver_id?: string; content?: any; created_at?: any; type?: string };
+          const byStudent = new Map<string, ChatMsg>();
+          for (const rawMsg of allMsgs) {
+            const msg = rawMsg as ChatMsg;
+            const otherId: string = String(msg.sender_id === tid ? (msg.receiver_id ?? '') : (msg.sender_id ?? ''));
+            if (!otherId) continue;
             if (otherId === tid) continue;
             if (!byStudent.has(otherId)) {
               byStudent.set(otherId, msg);
             }
           }
-          // Transforma em array ordenado por created_at decrescente
           const lastArr = Array.from(byStudent.entries())
             .sort((a, b) => new Date(b[1].created_at).getTime() - new Date(a[1].created_at).getTime())
             .slice(0, 3);
 
-          // Busca perfis dos alunos
           const ids = lastArr.map(([sid]) => sid);
-          let profiles: any[] = [];
+          type ProfileRow = { id?: string; full_name?: string; avatar_url?: string | null };
+          let profiles: ProfileRow[] = [];
           if (ids.length > 0) {
             const { data: pRows } = await supabase
               .from('profiles')
               .select('id, full_name, avatar_url')
               .in('id', ids);
-            profiles = pRows || [];
+            profiles = (pRows || []) as ProfileRow[];
           }
 
           const result = lastArr.map(([sid, msg]) => {
-            const p = profiles.find((x: any) => x.id === sid);
+            const p = profiles.find((x) => String(x.id) === sid);
             let preview = String(msg.content || '');
             if (msg.type && msg.type !== 'text') preview = '📎 Arquivo de mídia';
             if (preview.length > 52) preview = preview.slice(0, 52) + '...';
