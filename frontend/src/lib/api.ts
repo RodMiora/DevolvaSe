@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/supabase';
 
-export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+const DEFAULT_PRODUCTION_API_URL = 'https://devolvase.onrender.com';
+
+export const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || DEFAULT_PRODUCTION_API_URL
+).replace(/\/$/, '');
 
 export async function getApiBearerToken(): Promise<string | null> {
   try {
