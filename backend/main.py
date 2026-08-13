@@ -52,17 +52,21 @@ def _is_trusted_origin(origin: Optional[str]) -> bool:
     if not origin:
         return False
     o = origin.strip().lower()
+    if o == "null":
+        # iOS Safari homescreen, WKWebView, apps mobile, iframe sandbox: enviam "null" como origem.
+        # Como autenticamos via Bearer e nao so por cookie cross-origin, consideramos segura.
+        return True
     if o.startswith("http://localhost") or o.startswith("http://127.0.0.1"):
         return True
     if o.startswith("http://192.168.") or o.startswith("http://10.") or o.startswith("http://172."):
         return True
     if o.endswith(".vercel.app") or o == "https://devolva-se.vercel.app":
         return True
-    if o.endswith(".onrender.com"):
+    if o.endswith(".onrender.com") or o == "https://devolvase.onrender.com":
         return True
     if ".ngrok-free.app" in o or ".ngrok.app" in o or ".ngrok.io" in o:
         return True
-    if o.startswith("capacitor://") or o.startswith("file://"):
+    if o.startswith("capacitor://") or o.startswith("ionic://") or o.startswith("file://"):
         return True
     frontend_url = (os.getenv("FRONTEND_URL") or "").strip().lower()
     if frontend_url and frontend_url == o:
@@ -78,13 +82,17 @@ async def cors_and_security_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     # Resposta para preflight OPTIONS (fallback, antes do CORSMiddleware atuar)
     if request.method == "OPTIONS":
-        allowed_origin = origin if _is_trusted_origin(origin) else "*"
+        trusted = _is_trusted_origin(origin)
+        allowed_origin = origin if trusted else "*"
+        # Importante: browsers BLOQUEIAM resposta CORS quando Allow-Origin eh "*" e
+        # Allow-Credentials eh "true". So enviamos credentials=true para origens dinamicas.
+        allow_credentials = "true" if (trusted and allowed_origin != "*") else "false"
         headers = {
             "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
             "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Origin, X-Requested-With, apikey, x-client-info, x-application-secret, Range",
             "Access-Control-Expose-Headers": "Content-Length, Content-Type, Content-Range, ETag, Last-Modified",
-            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Credentials": allow_credentials,
             "Access-Control-Max-Age": "86400",
             "Vary": "Origin",
         }
@@ -102,9 +110,12 @@ async def cors_and_security_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer-when-downgrade"
     response.headers["Vary"] = "Origin, Accept-Encoding"
-    if _is_trusted_origin(origin):
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
+    trusted = _is_trusted_origin(origin)
+    if trusted:
+        response.headers["Access-Control-Allow-Origin"] = origin or "*"
+        # Como acima: Allow-Credentials=true apenas se Allow-Origin NAO for wildcard.
+        if origin and origin != "*":
+            response.headers["Access-Control-Allow-Credentials"] = "true"
     else:
         # Fallback publico (uploads de video podem ser acessados via player direto)
         response.headers["Access-Control-Allow-Origin"] = "*"

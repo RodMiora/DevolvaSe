@@ -1,10 +1,32 @@
 import { supabase } from '@/lib/supabase';
 
 const DEFAULT_PRODUCTION_API_URL = 'https://devolvase.onrender.com';
+const LOCALHOST_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i;
 
-export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || DEFAULT_PRODUCTION_API_URL
-).replace(/\/$/, '');
+function _resolveApiBaseUrl(): string {
+  const envValue = (process.env.NEXT_PUBLIC_API_URL || '').trim();
+  const candidate = (envValue || DEFAULT_PRODUCTION_API_URL).replace(/\/$/, '');
+
+  // Runtime blindagem: se app NAO estiver rodando em localhost/127.0.0.1 (ex: Vercel, celular, rede LAN),
+  // jamais usar localhost como API — cai direto no endereco HTTPS de producao do Render.
+  // Isso evita "Load failed" no mobile quando a env nao esta definida corretamente.
+  let isBrowserLocalhost = false;
+  if (typeof window !== 'undefined') {
+    const h = window.location.hostname.toLowerCase();
+    isBrowserLocalhost = (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '[::1]');
+  }
+
+  if (!isBrowserLocalhost && LOCALHOST_PATTERN.test(candidate)) {
+    console.warn(
+      '[api] NEXT_PUBLIC_API_URL aponta para localhost mas o app esta rodando fora do PC. Usando fallback seguro:',
+      DEFAULT_PRODUCTION_API_URL
+    );
+    return DEFAULT_PRODUCTION_API_URL;
+  }
+  return candidate;
+}
+
+export const API_BASE_URL: string = _resolveApiBaseUrl();
 
 export async function getApiBearerToken(): Promise<string | null> {
   try {
@@ -32,14 +54,15 @@ export async function getApiHeaders(opts: { json?: boolean; bearer?: boolean; cu
   return headers;
 }
 
-export function formatApiError(opts: { prefix: string; err?: unknown; response?: Response | null; detailFallback?: string }): string {
-  const { prefix, err, response, detailFallback } = opts;
+export function formatApiError(opts: { prefix: string; err?: unknown; response?: Response | null; detailFallback?: string; url?: string }): string {
+  const { prefix, err, response, detailFallback, url } = opts;
   const parts: string[] = [];
   if (response?.status) parts.push(`HTTP ${response.status}${response.statusText ? ` (${response.statusText})` : ''}`);
   if (detailFallback) parts.push(detailFallback);
   if (err) {
     if (err instanceof Error && err.message && !detailFallback) parts.push(err.message);
   }
+  if (url) parts.push(`URL: ${url}`);
   return `${prefix}${parts.length > 0 ? ' — ' + parts.join(' | ') : ''}`;
 }
 
@@ -81,9 +104,25 @@ export async function apiFetch(
       headers.set('Authorization', `Bearer ${token}`);
     }
   }
-  if (jsonBody && (init.body == null || typeof init.body === 'object') && !(init.body instanceof FormData) && !(init.body instanceof Blob)) {
-    if (!headers.has('Content-Type')) {
-      headers.set('Content-Type', 'application/json');
+  if (jsonBody) {
+    const body = init.body;
+    const isBinaryLike =
+      body instanceof FormData ||
+      body instanceof Blob ||
+      body instanceof ArrayBuffer ||
+      ArrayBuffer.isView(body) ||
+      (typeof body === 'object' && body !== null && typeof (body as any).getReader === 'function');
+
+    if (!isBinaryLike) {
+      // Auto-stringify objetos literais e arrays para JSON (evita [object Object] no body)
+      if (body !== null && body !== undefined && typeof body === 'object') {
+        init = { ...init, body: JSON.stringify(body) };
+      }
+      // Sempre define Content-Type: application/json para bodies textuais/stringificados,
+      // exceto se o caller explicitamente já definiu outro content-type.
+      if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
     }
   }
   try {
@@ -94,10 +133,17 @@ export async function apiFetch(
     });
     if (throwOnError && !response.ok) {
       const detail = await extractDetailText(response);
-      throw new Error(formatApiError({ prefix, response, detailFallback: detail }));
+      throw new Error(formatApiError({ prefix, response, detailFallback: detail, url }));
     }
     return response;
   } catch (err) {
+    // Erros de rede (TypeError: Load failed / Failed to fetch / NetworkError) nao tem status HTTP,
+    // entao garantimos que a URL alvo apareca para diagnosticar (localhost vs Render).
+    if (err instanceof Error) {
+      const enriched = formatApiError({ prefix, err, detailFallback: err.message, url });
+      err.message = enriched.replace(`${prefix} — `, '').replace(`${prefix} —`, '');
+      if (!err.message) err.message = formatApiError({ prefix, url }).replace(`${prefix} — `, '');
+    }
     if (throwOnError) throw err;
     throw err;
   }
