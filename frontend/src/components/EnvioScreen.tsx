@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ChevronDown, 
   ChevronUp, 
@@ -17,11 +17,20 @@ import {
 import { cn } from "@/lib/utils";
 import { supabase } from '@/lib/supabase';
 import { apiFetch, apiAlert } from '@/lib/api';
+import {
+  resolveLessonStatus,
+  subscribeStudentLessons,
+  subscribeStudentExercises,
+  type UnifiedLessonStatus,
+  type StudentLessonRow,
+  type ExerciseRow,
+  type RealtimeCleanupFn,
+} from '@/lib/lessonStatus';
 
 interface LessonSubmission {
   id: string;
   title: string;
-  status: 'completed' | 'awaiting-feedback' | 'not-submitted' | 'locked';
+  status: UnifiedLessonStatus;
   type: 'video' | 'audio';
   exercise_video_url?: string | null;
   exercise_thumbnail_url?: string | null;
@@ -212,29 +221,23 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         if (modulesData) {
           const assembledModules: Module[] = modulesData.map((mod: any) => {
             const moduleLessons = mod.lessons.map((lesson: any) => {
-              const access = accessData?.find((a: any) => a.lesson_id === lesson.id);
-              const exercise = exercisesData?.find((e: any) => e.lesson_id === lesson.id);
+              const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
+              const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
 
-              let status: LessonSubmission['status'] = 'locked';
-              if (access) {
-                if (access.is_completed) status = 'completed';
-                else if (exercise) status = 'awaiting-feedback';
-                else if (!access.is_locked) status = 'not-submitted';
-              }
+              const status: UnifiedLessonStatus = resolveLessonStatus({ access, exercise });
 
               return {
                 id: lesson.id,
                 title: lesson.title,
                 status,
-                type: 'video', // Defaulting to video for now
-                exercise_video_url: exercise?.video_url || null,
-                exercise_thumbnail_url: exercise?.thumbnail_url || null
+                type: 'video',
+                exercise_video_url: exercise?.video_url ?? exercise?.video_url ?? null,
+                exercise_thumbnail_url: exercise?.thumbnail_url ?? null
               };
             });
 
-            // Determine module status
-            const allCompleted = moduleLessons.every((l: any) => l.status === 'completed');
-            const allLocked = moduleLessons.every((l: any) => l.status === 'locked');
+            const allCompleted = moduleLessons.every((l: LessonSubmission) => l.status === 'approved');
+            const allLocked = moduleLessons.every((l: LessonSubmission) => l.status === 'locked');
             let modStatus: Module['status'] = 'pending';
             if (allCompleted) modStatus = 'completed';
             else if (allLocked) modStatus = 'locked';
@@ -249,14 +252,12 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
           setModules(assembledModules);
           
-          // Set open module to the first pending one
           const firstPending = assembledModules.find(m => m.status === 'pending');
-          if (firstPending) setOpenModules([firstPending.id]);
+          if (firstPending && openModules.length === 0) setOpenModules([firstPending.id]);
 
-          // Calculate progress
           const totalLessons = assembledModules.reduce((acc, m) => acc + m.lessons.length, 0);
           const completedLessons = assembledModules.reduce((acc, m) => 
-            acc + m.lessons.filter(l => l.status === 'completed').length, 0
+            acc + m.lessons.filter(l => l.status === 'approved').length, 0
           );
           setProgress(totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0);
         }
@@ -274,6 +275,37 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
   useEffect(() => {
     fetchData();
+  }, [studentId]);
+
+  useEffect(() => {
+    const onLessonChange = (_payload: any) => {
+      fetchData();
+    };
+    const onExerciseChange = (_payload: any) => {
+      fetchData();
+    };
+    let cleanupLessons: RealtimeCleanupFn = () => {};
+    let cleanupExercises: RealtimeCleanupFn = () => {};
+    try {
+      cleanupLessons = subscribeStudentLessons(studentId, onLessonChange);
+    } catch (e) {
+      console.warn('[EnvioScreen] subscribe student_lessons failed:', e);
+    }
+    try {
+      cleanupExercises = subscribeStudentExercises(studentId, onExerciseChange);
+    } catch (e) {
+      console.warn('[EnvioScreen] subscribe exercises failed:', e);
+    }
+    const fallback = window.setInterval(() => {
+      fetchData();
+    }, 15000);
+
+    return () => {
+      window.clearInterval(fallback);
+      cleanupLessons();
+      cleanupExercises();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentId]);
 
   const toggleModule = (id: string) => {
@@ -535,7 +567,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                     <div className="flex items-center gap-3 min-w-0">
                       {lesson.status === 'locked' ? (
                         <Lock className="w-4 h-4 text-[#ef4444] flex-shrink-0" />
-                      ) : (lesson.status === 'awaiting-feedback' || lesson.status === 'completed') && (lesson.exercise_video_url || lesson.exercise_thumbnail_url) ? (
+                      ) : (lesson.status === 'pending_review' || lesson.status === 'approved') && (lesson.exercise_video_url || lesson.exercise_thumbnail_url) ? (
                         <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 relative bg-zinc-800">
                           <img 
                             src={lesson.exercise_thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=200"} 
@@ -558,19 +590,19 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                           {lesson.title}
                         </span>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          {lesson.status === 'completed' && (
+                          {lesson.status === 'approved' && (
                             <div className="flex items-center gap-1">
                               <span className="text-[0.6875rem] text-[#22c55e] font-bold uppercase">Concluido</span>
                               <CheckCircle2 className="w-3 h-3 text-[#22c55e] fill-[#22c55e]/10" />
                             </div>
                           )}
-                          {lesson.status === 'awaiting-feedback' && (
+                          {lesson.status === 'pending_review' && (
                             <div className="flex items-center gap-1">
                               <span className="text-[0.6875rem] text-[#f97316] font-bold uppercase">Video Enviado</span>
                               <CheckCircle2 className="w-3 h-3 text-[#f97316] fill-[#f97316]/10" />
                             </div>
                           )}
-                          {lesson.status === 'not-submitted' && (
+                          {lesson.status === 'unlocked' && (
                             <span className="text-[0.6875rem] text-zinc-500 font-bold uppercase">Aguardando Video</span>
                           )}
                           {lesson.status === 'locked' && (
@@ -581,7 +613,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                     </div>
 
                     <div className="flex items-center gap-3 flex-shrink-0">
-                      {lesson.status === 'completed' && (lesson.exercise_video_url ? (
+                      {lesson.status === 'approved' && (lesson.exercise_video_url ? (
                         <div className="flex items-center gap-2">
                           <CheckCircle2 className="w-5 h-5 text-[#22c55e]" />
                           <button
@@ -614,7 +646,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                       ) : (
                         <CheckCircle2 className="w-5 h-5 text-[#22c55e]" />
                       ))}
-                      {lesson.status === 'awaiting-feedback' && (
+                      {lesson.status === 'pending_review' && (
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
@@ -644,7 +676,7 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
                           </button>
                         </div>
                       )}
-                      {lesson.status === 'not-submitted' && (
+                      {lesson.status === 'unlocked' && (
                         <div className="flex items-center gap-2">
                           <Circle className="w-5 h-5 text-zinc-700" />
                           <button

@@ -35,6 +35,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL, apiFetch, apiAlert, getApiBearerToken } from "@/lib/api";
+import {
+  resolveLessonStatus,
+  subscribeStudentLessons,
+  subscribeStudentExercises,
+  type RealtimeCleanupFn,
+  type StudentLessonRow,
+  type ExerciseRow,
+} from "@/lib/lessonStatus";
 
 interface Student {
   id: string;
@@ -560,11 +568,11 @@ export default function TeacherDashboard() {
     }
   }, [selectedStudent, courses, teacherId, selectedStudentInstrument]);
 
-  // Fetch lessons when selectedStudentInstrument changes
+  // Fetch lessons when selectedStudentInstrument changes + Realtime sync
   useEffect(() => {
+    let cancelled = false;
     if (selectedStudent && selectedStudentInstrument && teacherId) {
       fetchStudentLessons(selectedStudent.id, selectedStudentInstrument);
-      // Also update selectedCourse when instrument changes
       const courseToSelect = courses.find(
         (course) => (course?.name || '').toLowerCase() === (selectedStudentInstrument || '').toLowerCase()
       );
@@ -572,6 +580,36 @@ export default function TeacherDashboard() {
         setSelectedCourse(courseToSelect);
       }
     }
+
+    let cleanupLessons: RealtimeCleanupFn = () => {};
+    let cleanupExercises: RealtimeCleanupFn = () => {};
+    let fallbackInterval: number | null = null;
+
+    if (selectedStudent?.id) {
+      const refresh = () => {
+        if (cancelled || !selectedStudent?.id) return;
+        fetchStudentLessons(selectedStudent.id, selectedStudentInstrument ?? undefined);
+      };
+      try {
+        cleanupLessons = subscribeStudentLessons(selectedStudent.id, refresh);
+      } catch (e) {
+        console.warn('[TeacherDashboard] subscribe student_lessons erro:', e);
+      }
+      try {
+        cleanupExercises = subscribeStudentExercises(selectedStudent.id, refresh);
+      } catch (e) {
+        console.warn('[TeacherDashboard] subscribe exercises erro:', e);
+      }
+      fallbackInterval = window.setInterval(refresh, 30000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (fallbackInterval != null) window.clearInterval(fallbackInterval);
+      cleanupLessons();
+      cleanupExercises();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStudentInstrument, selectedStudent, teacherId, courses]);
 
   // Auto-scroll to bottom when messages change
@@ -892,31 +930,22 @@ export default function TeacherDashboard() {
         instrument_id: mod.instrument_id,
         order: mod.order,
         lessons: (mod.lessons || []).map((lesson: any) => {
-          const access = (accessData || []).find(a => a.lesson_id === lesson.id);
-          const exercise = (exercisesData || []).find(e => e.lesson_id === lesson.id);
+          const access = (accessData || []).find(a => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
+          const exercise = (exercisesData || []).find(e => e.lesson_id === lesson.id) as ExerciseRow | undefined;
           
-          // Resolve status: priority explicit DB status, fallback backward compat
-          let status: Lesson['status'] = 'locked';
-          if (access?.status && ['locked','unlocked','pending_review','approved'].includes(String(access.status))) {
-            status = access.status;
-          } else {
-            if (access?.is_completed) status = 'approved';
-            else if (exercise) status = 'pending_review';
-            else if (access && !access.is_locked) status = 'unlocked';
-            else status = 'locked';
-          }
-          
+          const status = resolveLessonStatus({ access, exercise });
+
           return {
             id: lesson.id,
             title: lesson.title,
-            is_locked: access ? access.is_locked : true,
-            is_completed: access?.is_completed || false,
+            is_locked: status === 'locked',
+            is_completed: status === 'approved',
             status,
             video_url: lesson.video_url,
             description: lesson.description,
-            exercise_video_url: exercise?.video_url || null,
-            exercise_thumbnail_url: exercise?.thumbnail_url || null,
-            exercise_id: exercise?.id || null,
+            exercise_video_url: exercise?.video_url ?? null,
+            exercise_thumbnail_url: exercise?.thumbnail_url ?? null,
+            exercise_id: exercise?.id ?? null,
             has_exercise: !!exercise
           };
         })

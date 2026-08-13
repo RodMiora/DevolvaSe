@@ -3,6 +3,14 @@ import { Play, CheckCircle2, Lock, MessageSquare, Send, X, Upload, Clock, Unlock
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useTabNavigation } from "./TabNavigationContext";
+import {
+  resolveLessonStatus,
+  subscribeStudentLessons,
+  subscribeStudentExercises,
+  type RealtimeCleanupFn,
+  type StudentLessonRow,
+  type ExerciseRow,
+} from "@/lib/lessonStatus";
 
 interface Lesson {
   id: string;
@@ -141,12 +149,14 @@ export default function LessonsScreen({
     });
   };
 
+  const [studentId, setStudentId] = useState<string | null>(null);
+
   useEffect(() => {
     const fetchLessons = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
-
+        setStudentId(user.id);
         // 0. Fetch Student Profile (ALL fields)
         const { data: profileData } = await supabase
           .from('profiles')
@@ -159,8 +169,6 @@ export default function LessonsScreen({
         console.log('[DEBUG] Campo instrument raw (Lessons):', profileData?.instrument);
         console.log('[DEBUG] Campo instruments raw (Lessons):', (profileData as any)?.instruments);
         
-        // Get instruments array from profile - column REAL is `instrument` (singular, string CSV)
-        // `instruments` column DOES NOT EXIST on profiles table (PGRST204 historical error)
         let studentInstruments: string[] = [];
         if (profileData?.instrument) {
           studentInstruments = String(profileData.instrument || '')
@@ -169,7 +177,6 @@ export default function LessonsScreen({
             .filter(i => i.length > 0);
         }
         
-        // FALLBACK: if empty, default to ['Guitarra'] (same as TeacherDashboard line 453)
         if (studentInstruments.length === 0) {
           studentInstruments = ['guitarra'];
           console.log('[DEBUG] Fallback aplicado: instrumentos vazios, usando Guitarra (Lessons)');
@@ -177,25 +184,21 @@ export default function LessonsScreen({
         
         console.log('[DEBUG] Instrumentos do perfil do aluno (Lessons):', studentInstruments);
         
-        // 0.5. Fetch all INSTRUMENTS (this is the correct table name - TeacherDashboard line 302 uses 'instruments')
         const { data: instrumentsData } = await supabase
           .from('instruments')
           .select('id, name');
         
         console.log('[DEBUG] Instrumentos disponíveis no banco (Lessons):', instrumentsData);
         
-        // Find instrument IDs that match student instruments (by name)
         const studentInstrumentIds = (instrumentsData || [])
           .filter(inst => studentInstruments.includes(String(inst.name || '').toLowerCase()))
           .map(inst => inst.id);
         
         console.log('[DEBUG] IDs de instrumentos correspondentes ao aluno (Lessons):', studentInstrumentIds);
 
-        // 1. Fetch Modules and Lessons FILTERED BY INSTRUMENT - NO FALLBACK
         let modulesData: any = [];
         
         if (studentInstrumentIds.length > 0) {
-          // Only fetch if we have instrument IDs to filter
           const query = supabase
             .from('modules')
             .select('*, lessons(*)')
@@ -207,18 +210,15 @@ export default function LessonsScreen({
         
         console.log('[DEBUG] Módulos retornados do banco (Lessons):', modulesData);
         
-        // Double client-side filter for safety
         modulesData = (modulesData || []).filter((mod: any) => 
           studentInstrumentIds.includes(mod.instrument_id)
         );
 
-        // Fetch student lesson access
         const { data: accessData } = await supabase
           .from('student_lessons')
           .select('*')
           .eq('student_id', user.id);
 
-        // Fetch student exercises
         const { data: exercisesData } = await supabase
           .from('exercises')
           .select('*')
@@ -228,20 +228,10 @@ export default function LessonsScreen({
           const allLessons: Lesson[] = [];
           modulesData.forEach((mod: any) => {
             (mod.lessons || []).forEach((lesson: any) => {
-              const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id);
-              const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id);
+              const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
+              const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
 
-              // Priority 1: explicit access.status from DB
-              // Priority 2: derive from is_locked / is_completed / exercise presence (backward compat)
-              let status: Lesson['status'] = 'locked';
-              if (access?.status && ['locked','unlocked','pending_review','approved'].includes(String(access.status))) {
-                status = access.status as Lesson['status'];
-              } else {
-                if (access?.is_completed) status = 'approved';
-                else if (exercise) status = 'pending_review';
-                else if (access && !access.is_locked) status = 'unlocked';
-                else status = 'locked';
-              }
+              const status = resolveLessonStatus({ access, exercise });
 
               allLessons.push({
                 id: lesson.id,
@@ -252,15 +242,14 @@ export default function LessonsScreen({
                 thumbnail: lesson.thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400",
                 duration: "5:00",
                 status,
-                exercise_video_url: exercise?.video_url || null,
-                exercise_thumbnail_url: exercise?.thumbnail_url || null,
+                exercise_video_url: exercise?.video_url ?? null,
+                exercise_thumbnail_url: exercise?.thumbnail_url ?? null,
                 has_exercise: !!exercise
               });
             });
           });
           setLessons(allLessons);
 
-          // After setting lessons, generate thumbnails for lessons that have video but no thumbnail_url
           allLessons.forEach(lesson => {
             if (!lesson.thumbnail_url && lesson.video_url) {
               generateThumbnail(lesson.id, lesson.video_url);
@@ -276,6 +265,122 @@ export default function LessonsScreen({
 
     fetchLessons();
   }, []);
+
+  useEffect(() => {
+    if (!studentId) return;
+    let cancelled = false;
+
+    const refetchLessons = async () => {
+      if (cancelled) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+
+      try {
+        setLoading(true);
+
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        let studentInstruments: string[] = [];
+        if (profileData?.instrument) {
+          studentInstruments = String(profileData.instrument || '')
+            .split(',')
+            .map(i => i.trim().toLowerCase())
+            .filter(i => i.length > 0);
+        }
+        if (studentInstruments.length === 0) studentInstruments = ['guitarra'];
+
+        const { data: instrumentsData } = await supabase
+          .from('instruments')
+          .select('id, name');
+
+        const studentInstrumentIds = (instrumentsData || [])
+          .filter(inst => studentInstruments.includes(String(inst.name || '').toLowerCase()))
+          .map(inst => inst.id);
+
+        let modulesData: any = [];
+        if (studentInstrumentIds.length > 0) {
+          const result = await supabase
+            .from('modules')
+            .select('*, lessons(*)')
+            .order('order', { ascending: true })
+            .in('instrument_id', studentInstrumentIds);
+          modulesData = result.data || [];
+        }
+        modulesData = (modulesData || []).filter((mod: any) =>
+          studentInstrumentIds.includes(mod.instrument_id)
+        );
+
+        const { data: accessData } = await supabase
+          .from('student_lessons')
+          .select('*')
+          .eq('student_id', user.id);
+
+        const { data: exercisesData } = await supabase
+          .from('exercises')
+          .select('*')
+          .eq('student_id', user.id);
+
+        if (modulesData) {
+          const allLessons: Lesson[] = [];
+          modulesData.forEach((mod: any) => {
+            (mod.lessons || []).forEach((lesson: any) => {
+              const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
+              const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
+              const status = resolveLessonStatus({ access, exercise });
+              allLessons.push({
+                id: lesson.id,
+                title: lesson.title,
+                description: lesson.description || '',
+                video_url: lesson.video_url,
+                thumbnail_url: lesson.thumbnail_url || null,
+                thumbnail: lesson.thumbnail_url || "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=400",
+                duration: "5:00",
+                status,
+                exercise_video_url: exercise?.video_url ?? null,
+                exercise_thumbnail_url: exercise?.thumbnail_url ?? null,
+                has_exercise: !!exercise
+              });
+            });
+          });
+          if (!cancelled) {
+            setLessons(prev => {
+              if (JSON.stringify(prev) === JSON.stringify(allLessons)) return prev;
+              return allLessons;
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('[LessonsScreen] refetch erro:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    const onLessonChange = () => { refetchLessons(); };
+    const onExerciseChange = () => { refetchLessons(); };
+
+    let cleanupLessons: RealtimeCleanupFn = () => {};
+    let cleanupExercises: RealtimeCleanupFn = () => {};
+    try { cleanupLessons = subscribeStudentLessons(studentId, onLessonChange); } catch (e) {
+      console.warn('[LessonsScreen] subscribe student_lessons erro:', e);
+    }
+    try { cleanupExercises = subscribeStudentExercises(studentId, onExerciseChange); } catch (e) {
+      console.warn('[LessonsScreen] subscribe exercises erro:', e);
+    }
+
+    const fallback = window.setInterval(refetchLessons, 20000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(fallback);
+      cleanupLessons();
+      cleanupExercises();
+    };
+  }, [studentId]);
 
   if (loading) {
     return (
