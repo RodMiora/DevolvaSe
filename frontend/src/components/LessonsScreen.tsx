@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Play, CheckCircle2, Lock, MessageSquare, Send, X, Upload, Clock, Unlock } from "lucide-react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Play, CheckCircle2, Lock, MessageSquare, Send, X, Upload, Clock, Unlock, Dumbbell, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useTabNavigation } from "./TabNavigationContext";
@@ -11,6 +11,7 @@ import {
   type StudentLessonRow,
   type ExerciseRow,
 } from "@/lib/lessonStatus";
+import { apiFetch, apiAlert, extractDetailText } from "@/lib/api";
 
 interface Lesson {
   id: string;
@@ -150,6 +151,119 @@ export default function LessonsScreen({
   };
 
   const [studentId, setStudentId] = useState<string | null>(null);
+  const lastLessonsJsonRef = useRef<string>('');
+  const localMutationAtRef = useRef<number>(0);
+
+  // =====================================================================
+  // FASE 3 - DIÁRIO DE TREINO (States + Types + Callbacks)
+  // =====================================================================
+  type PracticeLogRow = {
+    id: string;
+    student_id: string;
+    practice_date: string;
+    duration_minutes: number;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const [showPracticeModal, setShowPracticeModal] = useState(false);
+  const [practiceMinutes, setPracticeMinutes] = useState<number>(30);
+  const [practiceNotes, setPracticeNotes] = useState<string>("");
+  const [practiceSaving, setPracticeSaving] = useState(false);
+  const [recentPracticeLogs, setRecentPracticeLogs] = useState<PracticeLogRow[]>([]);
+  const [practiceLogsLoading, setPracticeLogsLoading] = useState(false);
+  const practiceLastFetchKeyRef = useRef<string>("");
+
+  const loadPracticeLogs = useCallback(async (force = false) => {
+    if (!studentId) return;
+    const key = `${studentId}`;
+    if (!force && practiceLastFetchKeyRef.current === key && recentPracticeLogs.length > 0) return;
+    practiceLastFetchKeyRef.current = key;
+    setPracticeLogsLoading(true);
+    try {
+      const res = await apiFetch(`/student/practice-logs/${encodeURIComponent(studentId)}?limit=14`, {
+        method: 'GET',
+      }, { bearer: true, jsonBody: false, prefix: 'Erro ao carregar histórico de treinos', throwOnError: false });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRecentPracticeLogs(Array.isArray(data?.practice_logs) ? data.practice_logs : []);
+      } else {
+        setRecentPracticeLogs([]);
+      }
+    } catch (e) {
+      console.warn('[Lessons] loadPracticeLogs erro:', e);
+      setRecentPracticeLogs([]);
+    } finally {
+      setPracticeLogsLoading(false);
+    }
+  }, [studentId, recentPracticeLogs.length]);
+
+  const handleSavePractice = useCallback(async () => {
+    if (!studentId) return;
+    if (!practiceMinutes || practiceMinutes <= 0) {
+      alert('⚠️ Informe uma duração válida maior que zero.');
+      return;
+    }
+    setPracticeSaving(true);
+    try {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const practiceDate = `${yyyy}-${mm}-${dd}`;
+
+      const res = await apiFetch('/student/practice-logs', {
+        method: 'POST',
+        body: {
+          student_id: studentId,
+          duration_minutes: practiceMinutes,
+          notes: practiceNotes.trim() || null,
+          practice_date: practiceDate,
+        },
+      }, { bearer: true, jsonBody: true, prefix: 'Erro ao registrar treino', throwOnError: false });
+
+      if (res.ok) {
+        alert('✅ Treino registrado com sucesso!');
+        setPracticeMinutes(30);
+        setPracticeNotes("");
+        setShowPracticeModal(false);
+        loadPracticeLogs(true);
+      } else {
+        const detail = await extractDetailText(res).catch(() => '');
+        apiAlert('Erro ao registrar treino', detail || 'Tente novamente.');
+      }
+    } catch (e) {
+      apiAlert('Erro ao registrar treino', e);
+    } finally {
+      setPracticeSaving(false);
+    }
+  }, [studentId, practiceMinutes, practiceNotes, loadPracticeLogs]);
+
+  const practiceStats = (() => {
+    const logs = recentPracticeLogs || [];
+    if (!logs.length) return { totalMin: 0, last7Min: 0, streak: 0, todayDone: false };
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const todayDone = logs.some(l => l.practice_date === todayStr);
+    let last7Min = 0;
+    const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6); weekAgo.setHours(0,0,0,0);
+    for (const l of logs) {
+      const d = new Date(l.practice_date + 'T00:00:00');
+      if (d >= weekAgo) { last7Min += l.duration_minutes || 0; }
+    }
+    let streak = 0;
+    const cursor = new Date(); cursor.setHours(0,0,0,0);
+    const dateSet = new Set(logs.map(l => l.practice_date));
+    for (let i = 0; i < 60; i++) {
+      const yyyy = cursor.getFullYear();
+      const mm = String(cursor.getMonth()+1).padStart(2,'0');
+      const dd = String(cursor.getDate()).padStart(2,'0');
+      const key = `${yyyy}-${mm}-${dd}`;
+      if (dateSet.has(key)) { streak++; cursor.setDate(cursor.getDate() - 1); }
+      else { if (i === 0) { cursor.setDate(cursor.getDate() - 1); continue; } break; }
+    }
+    return { totalMin: logs.reduce((s,l) => s + (l.duration_minutes||0), 0), last7Min, streak, todayDone };
+  })();
 
   useEffect(() => {
     const fetchLessons = async () => {
@@ -231,7 +345,12 @@ export default function LessonsScreen({
               const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
               const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
 
-              const status = resolveLessonStatus({ access, exercise });
+              let status = resolveLessonStatus({ access, exercise });
+              // Blindagem: sem coluna status no banco, usa booleano is_locked (prioridade)
+              if (access && (access.status === undefined || access.status === null || String(access.status).trim() === '')) {
+                if (access.is_completed === true) status = 'approved';
+                else if (typeof access.is_locked === 'boolean') status = access.is_locked ? 'locked' : 'unlocked';
+              }
 
               allLessons.push({
                 id: lesson.id,
@@ -248,7 +367,17 @@ export default function LessonsScreen({
               });
             });
           });
-          setLessons(allLessons);
+          try {
+            const json = JSON.stringify(allLessons);
+            if (lastLessonsJsonRef.current && lastLessonsJsonRef.current === json) {
+              // Skip set state to avoid re-renders when realtime returns same data
+            } else {
+              lastLessonsJsonRef.current = json;
+              setLessons(allLessons);
+            }
+          } catch {
+            setLessons(allLessons);
+          }
 
           allLessons.forEach(lesson => {
             if (!lesson.thumbnail_url && lesson.video_url) {
@@ -269,9 +398,13 @@ export default function LessonsScreen({
   useEffect(() => {
     if (!studentId) return;
     let cancelled = false;
+    const COOLDOWN_MS = 1200;
 
-    const refetchLessons = async () => {
+    const refetchLessons = async (fromRemote: boolean = false) => {
       if (cancelled) return;
+      if (fromRemote && Date.now() - localMutationAtRef.current < COOLDOWN_MS) {
+        return;
+      }
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || cancelled) return;
 
@@ -330,7 +463,14 @@ export default function LessonsScreen({
             (mod.lessons || []).forEach((lesson: any) => {
               const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
               const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
-              const status = resolveLessonStatus({ access, exercise });
+
+              let status = resolveLessonStatus({ access, exercise });
+              // Blindagem: sem coluna status no banco, usa booleano is_locked (prioridade)
+              if (access && (access.status === undefined || access.status === null || String(access.status).trim() === '')) {
+                if (access.is_completed === true) status = 'approved';
+                else if (typeof access.is_locked === 'boolean') status = access.is_locked ? 'locked' : 'unlocked';
+              }
+
               allLessons.push({
                 id: lesson.id,
                 title: lesson.title,
@@ -360,8 +500,8 @@ export default function LessonsScreen({
       }
     };
 
-    const onLessonChange = () => { refetchLessons(); };
-    const onExerciseChange = () => { refetchLessons(); };
+    const onLessonChange = () => { refetchLessons(true); };
+    const onExerciseChange = () => { refetchLessons(true); };
 
     let cleanupLessons: RealtimeCleanupFn = () => {};
     let cleanupExercises: RealtimeCleanupFn = () => {};
@@ -381,6 +521,8 @@ export default function LessonsScreen({
       cleanupExercises();
     };
   }, [studentId]);
+
+  useEffect(() => { if (studentId) loadPracticeLogs(true); }, [studentId, loadPracticeLogs]);
 
   if (loading) {
     return (
@@ -511,9 +653,172 @@ export default function LessonsScreen({
         </div>
       )}
 
+      {/* Modal Diário de Treino */}
+      {showPracticeModal && (
+        <div className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => !practiceSaving && setShowPracticeModal(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-md bg-zinc-900 border border-white/10 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl animate-in slide-in-from-bottom sm:slide-in-from-bottom-8"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-full bg-[#00C853]/15 flex items-center justify-center">
+                  <Dumbbell className="w-5 h-5 text-[#00C853]" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-lg">Registrar Treino</h3>
+                  <p className="text-zinc-400 text-xs">Marque aqui o seu treino de hoje</p>
+                </div>
+              </div>
+              <button onClick={() => !practiceSaving && setShowPracticeModal(false)} className="p-2 text-zinc-400 hover:text-white disabled:opacity-40" disabled={practiceSaving}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-zinc-300 text-xs font-bold mb-1.5 block">Duração (minutos)</label>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setPracticeMinutes((m) => Math.max(5, (m || 0) - 5))}
+                    disabled={practiceSaving}
+                    className="w-11 h-11 rounded-xl bg-zinc-800 text-white font-bold text-lg border border-white/10 hover:bg-zinc-700 disabled:opacity-40 active:scale-95"
+                  >
+                    -5
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    value={practiceMinutes}
+                    onChange={(e) => { const v = parseInt(e.target.value || '0', 10); setPracticeMinutes(isFinite(v) ? Math.max(0, v) : 0); }}
+                    disabled={practiceSaving}
+                    className="flex-1 h-11 bg-zinc-800 border border-white/10 rounded-xl text-white text-center font-bold text-xl focus:outline-none focus:ring-2 focus:ring-[#00C853]/40 disabled:opacity-60"
+                  />
+                  <button
+                    onClick={() => setPracticeMinutes((m) => (m || 0) + 5)}
+                    disabled={practiceSaving}
+                    className="w-11 h-11 rounded-xl bg-zinc-800 text-white font-bold text-lg border border-white/10 hover:bg-zinc-700 disabled:opacity-40 active:scale-95"
+                  >
+                    +5
+                  </button>
+                </div>
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  {[15, 30, 45, 60, 90].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setPracticeMinutes(m)}
+                      disabled={practiceSaving}
+                      className={cn(
+                        "px-3 py-1 rounded-full text-xs font-bold border transition-all disabled:opacity-40",
+                        practiceMinutes === m
+                          ? "bg-[#00C853] text-black border-[#00C853]"
+                          : "bg-zinc-800 text-zinc-300 border-white/10 hover:text-white"
+                      )}
+                    >
+                      {m} min
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-zinc-300 text-xs font-bold mb-1.5 block">O que você treinou hoje? (opcional)</label>
+                <textarea
+                  value={practiceNotes}
+                  onChange={(e) => setPracticeNotes(e.target.value)}
+                  disabled={practiceSaving}
+                  rows={3}
+                  placeholder="Ex: treinei a pestana F, escala pentatônica de Lá..."
+                  className="w-full resize-none rounded-xl bg-zinc-800 border border-white/10 p-3 text-white text-sm placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#00C853]/40 disabled:opacity-60"
+                />
+              </div>
+
+              <button
+                onClick={handleSavePractice}
+                disabled={practiceSaving || !practiceMinutes || practiceMinutes <= 0}
+                className="w-full py-3 rounded-xl bg-[#00C853] text-black font-bold text-sm hover:bg-[#00b84a] transition-all active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2"
+              >
+                {practiceSaving ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <Dumbbell className="w-4 h-4" />
+                    Registrar treino de hoje
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Scrollable Content - Cards com miniaturas individuais e bordas coloridas por status */}
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-32 w-full">
-        <h2 className="text-[1.5rem] font-bold text-white mb-6">Vídeos</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-[1.5rem] font-bold text-white">Vídeos</h2>
+          <button
+            onClick={() => setShowPracticeModal(true)}
+            className={cn(
+              "flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold border transition-all active:scale-95",
+              practiceStats.todayDone
+                ? "bg-[#00C853]/15 text-[#00C853] border-[#00C853]/30 hover:bg-[#00C853]/25"
+                : "bg-[#00C853] text-black border-[#00C853] hover:bg-[#00b84a] shadow-[0_0_20px_rgba(0,200,83,0.25)]"
+            )}
+          >
+            <Dumbbell className="w-4 h-4" />
+            {practiceStats.todayDone ? "Registrado ✅" : "Registrar treino"}
+          </button>
+        </div>
+
+        {/* Card consistência (Diário de Treino) */}
+        <div className="mb-5 rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-black p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <CalendarDays className="w-4 h-4 text-[#00C853]" />
+            <span className="text-white font-bold text-sm">Consistência de treino</span>
+            {practiceLogsLoading && (
+              <div className="ml-auto w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-300 rounded-full animate-spin" />
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-black/40 border border-white/5 p-3 text-center">
+              <div className="text-zinc-400 text-[0.65rem] font-bold uppercase tracking-wider mb-1">Últimos 7 dias</div>
+              <div className="text-white font-black text-xl tabular-nums">{practiceStats.last7Min}<span className="text-zinc-500 text-xs font-bold ml-0.5">min</span></div>
+            </div>
+            <div className="rounded-xl bg-black/40 border border-white/5 p-3 text-center">
+              <div className="text-zinc-400 text-[0.65rem] font-bold uppercase tracking-wider mb-1">Sequência</div>
+              <div className="text-white font-black text-xl tabular-nums flex items-center justify-center gap-1">
+                {practiceStats.streak}<span className="text-zinc-500 text-xs font-bold">dias</span>
+                {practiceStats.streak >= 3 && <span>🔥</span>}
+              </div>
+            </div>
+            <div className="rounded-xl bg-black/40 border border-white/5 p-3 text-center">
+              <div className="text-zinc-400 text-[0.65rem] font-bold uppercase tracking-wider mb-1">Hoje</div>
+              <div className={cn("font-black text-xl", practiceStats.todayDone ? "text-[#00C853]" : "text-zinc-500")}>
+                {practiceStats.todayDone ? "✅" : "—"}
+              </div>
+            </div>
+          </div>
+          {!practiceLogsLoading && recentPracticeLogs.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/5">
+              <div className="text-zinc-400 text-[0.6875rem] font-bold mb-2 uppercase tracking-wide">Últimos treinos</div>
+              <div className="space-y-1.5 max-h-28 overflow-y-auto">
+                {recentPracticeLogs.slice(0, 5).map((l) => (
+                  <div key={l.id} className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-zinc-300 tabular-nums">{(() => {
+                      const d = new Date(l.practice_date + 'T00:00:00');
+                      return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+                    })()}</span>
+                    <div className="flex-1 truncate text-zinc-500">{l.notes || <span className="italic">Sem observações</span>}</div>
+                    <span className="text-white font-bold tabular-nums">{l.duration_minutes} min</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {(lessons || []).length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-center">

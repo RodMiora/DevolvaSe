@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Users, 
@@ -31,10 +31,19 @@ import {
   Pencil,
   Trash2,
   Menu,
-  Clock
+  Clock,
+  NotebookPen,
+  FileText,
+  Save,
+  Dumbbell,
+  CalendarDays,
+  BookA,
+  Layers3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL, apiFetch, apiAlert, getApiBearerToken } from "@/lib/api";
+import NotificationBell from "./NotificationBell";
+import BibliotecaAulas from "./BibliotecaAulas";
 import {
   resolveLessonStatus,
   subscribeStudentLessons,
@@ -106,7 +115,7 @@ interface CourseVideo {
 }
 
 export default function TeacherDashboard() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'cursos' | 'alunos' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'cursos' | 'alunos' | 'config' | 'biblioteca'>('dashboard');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [viewMode, setViewMode] = useState<'chat' | 'lessons'>('chat');
@@ -125,6 +134,9 @@ export default function TeacherDashboard() {
   const [openModules, setOpenModules] = useState<string[]>([]);
   const messagesChannelRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const localMutationAtRef = useRef<number>(0);
+  const pendingLessonKeysRef = useRef<Set<string>>(new Set());
+  const lastModulesJsonRef = useRef<string>('');
   const [loading, setLoading] = useState(false);
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -210,9 +222,6 @@ export default function TeacherDashboard() {
   const [editStudentName, setEditStudentName] = useState("");
   const [editSelectedInstruments, setEditSelectedInstruments] = useState<string[]>([]);
   const [editStudentPhone, setEditStudentPhone] = useState("");
-
-  // Student Lessons View State
-  const [selectedStudentInstrument, setSelectedStudentInstrument] = useState<string | null>(null);
   
   // Upload Video Form State
   const [videoTitle, setVideoTitle] = useState("");
@@ -232,8 +241,8 @@ export default function TeacherDashboard() {
   const [selectedCourseForModule, setSelectedCourseForModule] = useState<string | null>(null);
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleDescription, setModuleDescription] = useState("");
-  
-  // Configurações states
+
+  // Configurações states (professor/global) — CARREGADOS PRIMEIRO pq callbacks do Prontuário usam teacherProfile
   const [teacherProfile, setTeacherProfile] = useState<any>(null);
   const [teacherName, setTeacherName] = useState("");
   const [teacherInstruments, setTeacherInstruments] = useState("");
@@ -242,8 +251,8 @@ export default function TeacherDashboard() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [theme, setTheme] = useState("dark"); // Initialize with default
-  const [themeLoaded, setThemeLoaded] = useState(false); // To track when we get theme from localStorage
+  const [theme, setTheme] = useState("dark");
+  const [themeLoaded, setThemeLoaded] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
 
@@ -258,7 +267,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!themeLoaded) return;
     localStorage.setItem("app_theme", theme);
-    
+
     // Set CSS variables that are actually used in globals.css
     if (theme === "light") {
       document.documentElement.style.setProperty('--background', '#ffffff');
@@ -278,6 +287,316 @@ export default function TeacherDashboard() {
       document.documentElement.style.setProperty('--text-secondary', '#888888');
     }
   }, [theme, themeLoaded]);
+
+  // Student Lessons View State (colocado DEPOIS de teacherProfile pois usa em array deps
+  const [selectedStudentInstrument, setSelectedStudentInstrument] = useState<string | null>(null);
+  const [studentLessonsSubTab, setStudentLessonsSubTab] = useState<'modules' | 'prontuario' | 'treinos'>('modules');
+
+  // ============================================================
+  // FASE 2 - Prontuário / Acompanhamento por Instrumento
+  // ============================================================
+  type EnrollmentRow = {
+    id: string;
+    student_id: string;
+    instrument_id: string;
+    current_module_id: string | null;
+    last_completed_lesson_id: string | null;
+    position_note: string | null;
+    created_at: string;
+    updated_at: string | null;
+  };
+  type InstructorNoteRow = {
+    id: string;
+    student_id: string;
+    instrument_id: string;
+    instructor_id: string;
+    title: string | null;
+    body: string;
+    created_at: string;
+    updated_at: string | null;
+    profiles?: { full_name: string; username: string } | null;
+  };
+
+  const [prontuarioEnrollment, setProntuarioEnrollment] = useState<EnrollmentRow | null>(null);
+  const [prontuarioNotes, setProntuarioNotes] = useState<InstructorNoteRow[]>([]);
+  const [prontuarioLoading, setProntuarioLoading] = useState(false);
+  const [prontuarioSaving, setProntuarioSaving] = useState(false);
+  const [prontuarioCurrentModuleId, setProntuarioCurrentModuleId] = useState<string>('');
+  const [prontuarioLastLessonId, setProntuarioLastLessonId] = useState<string>('');
+  const [prontuarioPositionNote, setProntuarioPositionNote] = useState<string>('');
+  const [novaNotaTitulo, setNovaNotaTitulo] = useState<string>('');
+  const [novaNotaCorpo, setNovaNotaCorpo] = useState<string>('');
+  const [novaNotaSalvando, setNovaNotaSalvando] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editingNoteTitulo, setEditingNoteTitulo] = useState<string>('');
+  const [editingNoteCorpo, setEditingNoteCorpo] = useState<string>('');
+  const [editingNoteSalvando, setEditingNoteSalvando] = useState(false);
+  const [deletedNoteId, setDeletedNoteId] = useState<string | null>(null);
+  const prontuarioLastFetchKeyRef = useRef<string>('');
+
+  const fetchProntuarioData = useCallback(async (student: any, instrumentName: string | null) => {
+    if (!student || !instrumentName) {
+      setProntuarioEnrollment(null);
+      setProntuarioNotes([]);
+      prontuarioLastFetchKeyRef.current = '';
+      return;
+    }
+    const course = courses.find(c => c.name.toLowerCase() === instrumentName.toLowerCase());
+    if (!course) return;
+    const cacheKey = `${student.id}:${course.id}`;
+    prontuarioLastFetchKeyRef.current = cacheKey;
+    setProntuarioLoading(true);
+    try {
+      const [enrollRes, notesRes] = await Promise.all([
+        apiFetch(`/admin/enrollments/${student.id}/${course.id}`, { method: 'GET' }),
+        apiFetch(`/admin/notes/${student.id}/${course.id}`, { method: 'GET' })
+      ]);
+      if (prontuarioLastFetchKeyRef.current !== cacheKey) return; // stale
+      const enrollJson = await enrollRes.json().catch(() => ({}));
+      const notesJson = await notesRes.json().catch(() => ({ notes: [] }));
+      if (enrollJson?.enrollment) {
+        setProntuarioEnrollment(enrollJson.enrollment);
+        setProntuarioCurrentModuleId(enrollJson.enrollment.current_module_id || '');
+        setProntuarioLastLessonId(enrollJson.enrollment.last_completed_lesson_id || '');
+        setProntuarioPositionNote(enrollJson.enrollment.position_note || '');
+      } else {
+        setProntuarioEnrollment(null);
+        setProntuarioCurrentModuleId('');
+        setProntuarioLastLessonId('');
+        setProntuarioPositionNote('');
+      }
+      setProntuarioNotes(Array.isArray(notesJson?.notes) ? notesJson.notes : []);
+    } catch (e: any) {
+      console.warn('[prontuario] fetch falhou (tabela nova pode ainda nao existir no ambiente):', e?.message || e);
+    } finally {
+      if (prontuarioLastFetchKeyRef.current === cacheKey) setProntuarioLoading(false);
+    }
+  }, [courses]);
+
+  // Dispara o fetch do prontuário: quando muda aluno OU instrumento OU muda para aba Prontuário
+  useEffect(() => {
+    if (!selectedStudent) return;
+    const instrument = selectedStudentInstrument || selectedStudent.instruments?.[0] || null;
+    if (studentLessonsSubTab === 'prontuario' || prontuarioEnrollment || prontuarioNotes.length) {
+      void fetchProntuarioData(selectedStudent, instrument);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStudent?.id, selectedStudentInstrument, studentLessonsSubTab]);
+
+  // Quando selectedStudent muda e tem instruments > 0, reset selectedStudentInstrument (já existia)
+  // e também reseta prontuário cache
+  useEffect(() => {
+    if (!selectedStudent) {
+      setProntuarioEnrollment(null);
+      setProntuarioNotes([]);
+      prontuarioLastFetchKeyRef.current = '';
+      return;
+    }
+    setStudentLessonsSubTab('modules');
+    const instruments = selectedStudent.instruments;
+    if (instruments && instruments.length > 0) {
+      // Primeiro instrumento default
+      setSelectedStudentInstrument(prev => {
+        if (prev && instruments.includes(prev)) return prev;
+        return instruments[0];
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStudent?.id]);
+
+  // ============================================================
+  // FASE 3 - DIÁRIO DE TREINO (Histórico do Professor)
+  // ============================================================
+  type TeacherPracticeLogRow = {
+    id: string;
+    student_id: string;
+    practice_date: string;
+    duration_minutes: number;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const [practiceLogs, setPracticeLogs] = useState<TeacherPracticeLogRow[]>([]);
+  const [practiceLogsLoading, setPracticeLogsLoading] = useState(false);
+  const practiceLogsLastFetchRef = useRef<string>('');
+
+  const fetchPracticeLogs = useCallback(async (student: any, force = false) => {
+    if (!student) { setPracticeLogs([]); practiceLogsLastFetchRef.current = ''; return; }
+    const cacheKey = `${student.id}`;
+    if (!force && practiceLogsLastFetchRef.current === cacheKey && practiceLogs.length > 0) return;
+    practiceLogsLastFetchRef.current = cacheKey;
+    setPracticeLogsLoading(true);
+    try {
+      const res = await apiFetch(`/admin/practice-logs/${encodeURIComponent(student.id)}?limit=90`, { method: 'GET' }, { prefix: 'Erro ao carregar treinos', throwOnError: false });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPracticeLogs(Array.isArray(data?.practice_logs) ? data.practice_logs : []);
+      } else {
+        setPracticeLogs([]);
+      }
+    } catch (e) {
+      console.warn('[practice] fetch falhou:', e);
+      setPracticeLogs([]);
+    } finally {
+      if (practiceLogsLastFetchRef.current === cacheKey) setPracticeLogsLoading(false);
+    }
+  }, [practiceLogs.length]);
+
+  useEffect(() => {
+    if (!selectedStudent) return;
+    if (studentLessonsSubTab === 'treinos' || practiceLogs.length > 0) {
+      void fetchPracticeLogs(selectedStudent, studentLessonsSubTab === 'treinos');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStudent?.id, studentLessonsSubTab]);
+
+  useEffect(() => {
+    if (!selectedStudent) { setPracticeLogs([]); practiceLogsLastFetchRef.current = ''; return; }
+  }, [selectedStudent?.id]);
+
+  const practiceStatsTeacher = (() => {
+    const logs = practiceLogs || [];
+    if (!logs.length) return { totalMin: 0, last7Min: 0, last30Min: 0, streak: 0, daysTrained: 0, todayDone: false };
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const todayDone = logs.some(l => l.practice_date === todayStr);
+    let last7Min = 0, last30Min = 0;
+    const days7Ago = new Date(); days7Ago.setDate(days7Ago.getDate() - 6); days7Ago.setHours(0,0,0,0);
+    const days30Ago = new Date(); days30Ago.setDate(days30Ago.getDate() - 29); days30Ago.setHours(0,0,0,0);
+    const uniqueDays = new Set<string>();
+    for (const l of logs) {
+      const d = new Date(l.practice_date + 'T00:00:00');
+      if (d >= days7Ago) last7Min += l.duration_minutes || 0;
+      if (d >= days30Ago) { last30Min += l.duration_minutes || 0; uniqueDays.add(l.practice_date); }
+    }
+    let streak = 0;
+    const cursor = new Date(); cursor.setHours(0,0,0,0);
+    const dateSet = new Set(logs.map(l => l.practice_date));
+    for (let i = 0; i < 120; i++) {
+      const yyyy = cursor.getFullYear();
+      const mm = String(cursor.getMonth()+1).padStart(2,'0');
+      const dd = String(cursor.getDate()).padStart(2,'0');
+      const key = `${yyyy}-${mm}-${dd}`;
+      if (dateSet.has(key)) { streak++; cursor.setDate(cursor.getDate() - 1); }
+      else { if (i === 0) { cursor.setDate(cursor.getDate() - 1); continue; } break; }
+    }
+    return { totalMin: logs.reduce((s,l) => s + (l.duration_minutes||0), 0), last7Min, last30Min, streak, daysTrained: uniqueDays.size, todayDone };
+  })();
+
+  const salvarProntuario = useCallback(async () => {
+    if (!selectedStudent) return;
+    const instrumentName = selectedStudentInstrument || selectedStudent.instruments?.[0] || null;
+    const course = courses.find(c => c.name.toLowerCase() === instrumentName?.toLowerCase());
+    if (!course) return;
+    setProntuarioSaving(true);
+    try {
+      const resp = await apiFetch('/admin/enrollments', {
+        method: 'POST',
+        body: {
+          student_id: selectedStudent.id,
+          instrument_id: course.id,
+          current_module_id: prontuarioCurrentModuleId.trim() || null,
+          last_completed_lesson_id: prontuarioLastLessonId.trim() || null,
+          position_note: prontuarioPositionNote.trim() || null
+        }
+      });
+      const data = await resp.json();
+      if (data?.enrollment) {
+        setProntuarioEnrollment(data.enrollment);
+      }
+      alert('✅ Prontuário salvo com sucesso!');
+    } catch (e: any) {
+      const msg = typeof e?.detail === 'object' ? (e.detail?.message || String(e.detail)) : (e?.message || 'Erro ao salvar');
+      apiAlert('Erro ao salvar prontuário', msg);
+    } finally {
+      setProntuarioSaving(false);
+    }
+  }, [selectedStudent, selectedStudentInstrument, courses, prontuarioCurrentModuleId, prontuarioLastLessonId, prontuarioPositionNote]);
+
+  const adicionarAnotacao = useCallback(async () => {
+    if (!selectedStudent || !novaNotaCorpo.trim()) {
+      alert('⚠️ Preencha a anotação antes de salvar.');
+      return;
+    }
+    const instrumentName = selectedStudentInstrument || selectedStudent.instruments?.[0] || null;
+    const course = courses.find(c => c.name.toLowerCase() === instrumentName?.toLowerCase());
+    if (!course) return;
+    setNovaNotaSalvando(true);
+    try {
+      const resp = await apiFetch('/admin/notes', {
+        method: 'POST',
+        body: {
+          student_id: selectedStudent.id,
+          instrument_id: course.id,
+          instructor_id: teacherProfile?.id || teacherProfile?.profile_id || selectedStudent.id,
+          title: novaNotaTitulo.trim() || null,
+          body: novaNotaCorpo.trim()
+        }
+      });
+      const data = await resp.json();
+      if (data?.note) {
+        const note = data.note as InstructorNoteRow;
+        if (teacherProfile) {
+          (note as any).profiles = {
+            full_name: teacherProfile?.full_name || teacherProfile?.name || 'Professor',
+            username: teacherProfile?.username || 'admin'
+          };
+        }
+        setProntuarioNotes(prev => [note, ...prev]);
+      }
+      setNovaNotaTitulo('');
+      setNovaNotaCorpo('');
+      alert('✅ Anotação adicionada!');
+    } catch (e: any) {
+      const msg = typeof e?.detail === 'object' ? (e.detail?.message || String(e.detail)) : (e?.message || 'Erro ao adicionar anotação');
+      apiAlert('Erro ao adicionar anotação', msg);
+    } finally {
+      setNovaNotaSalvando(false);
+    }
+  }, [selectedStudent, selectedStudentInstrument, courses, novaNotaTitulo, novaNotaCorpo, teacherProfile]);
+
+  const editarAnotacao = useCallback(async (noteId: string) => {
+    if (!editingNoteCorpo.trim()) { alert('⚠️ Preencha a anotação antes de salvar.'); return; }
+    setEditingNoteSalvando(true);
+    try {
+      const resp = await apiFetch(`/admin/notes/${noteId}`, {
+        method: 'PATCH',
+        body: {
+          title: editingNoteTitulo.length ? (editingNoteTitulo.trim() || null) : undefined,
+          body: editingNoteCorpo.trim()
+        }
+      });
+      const data = await resp.json();
+      if (data?.note) {
+        setProntuarioNotes(prev => prev.map(n => n.id === noteId ? { ...n, ...(data.note as Partial<InstructorNoteRow>) } : n));
+      }
+      setEditingNoteId(null);
+      alert('✅ Anotação atualizada!');
+    } catch (e: any) {
+      const msg = typeof e?.detail === 'object' ? (e.detail?.message || String(e.detail)) : (e?.message || 'Erro');
+      apiAlert('Erro ao editar anotação', msg);
+    } finally {
+      setEditingNoteSalvando(false);
+    }
+  }, [editingNoteTitulo, editingNoteCorpo]);
+
+  const excluirAnotacao = useCallback(async (noteId: string) => {
+    setDeletedNoteId(noteId);
+    try {
+      await apiFetch(`/admin/notes/${noteId}`, { method: 'DELETE' });
+      setProntuarioNotes(prev => prev.filter(n => n.id !== noteId));
+      alert('✅ Anotação excluída!');
+    } catch (e: any) {
+      const msg = typeof e?.detail === 'object' ? (e.detail?.message || String(e.detail)) : (e?.message || 'Erro');
+      apiAlert('Erro ao excluir anotação', msg);
+    } finally {
+      setDeletedNoteId(null);
+    }
+  }, []);
+
+  // ============================================================
+  // FIM FASE 2 - Prontuário
+  // ============================================================
 
   useEffect(() => {
     fetchStudents();
@@ -441,7 +760,10 @@ export default function TeacherDashboard() {
         order: m.order, 
         lessons: [] 
       })));
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError' || error.message?.includes('Lock broken')) {
+        return;
+      }
       console.error('Error fetching all modules:', error);
     }
   };
@@ -457,7 +779,10 @@ export default function TeacherDashboard() {
       
       console.log('fetchCourses data:', data);
       setCourses(data || []);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError' || error.message?.includes('Lock broken')) {
+        return;
+      }
       console.error('Error fetching courses:', error);
     }
   };
@@ -572,7 +897,8 @@ export default function TeacherDashboard() {
   useEffect(() => {
     let cancelled = false;
     if (selectedStudent && selectedStudentInstrument && teacherId) {
-      fetchStudentLessons(selectedStudent.id, selectedStudentInstrument);
+      lastModulesJsonRef.current = '';
+      fetchStudentLessons(selectedStudent.id, selectedStudentInstrument, { fromRemoteEvent: false });
       const courseToSelect = courses.find(
         (course) => (course?.name || '').toLowerCase() === (selectedStudentInstrument || '').toLowerCase()
       );
@@ -586,21 +912,44 @@ export default function TeacherDashboard() {
     let fallbackInterval: number | null = null;
 
     if (selectedStudent?.id) {
-      const refresh = () => {
-        if (cancelled || !selectedStudent?.id) return;
-        fetchStudentLessons(selectedStudent.id, selectedStudentInstrument ?? undefined);
+      const extractLessonId = (payload: any): string | undefined => {
+        try {
+          const newRec = (payload && (payload.new || payload.record)) || null;
+          const oldRec = (payload && (payload.old || payload.previous)) || null;
+          return (newRec && String(newRec.lesson_id || '')) || (oldRec && String(oldRec.lesson_id || '')) || undefined;
+        } catch {
+          return undefined;
+        }
       };
+
+      const refresh = (payload?: any, source: 'realtime' | 'interval' = 'interval') => {
+        if (cancelled || !selectedStudent?.id) return;
+        fetchStudentLessons(
+          selectedStudent.id,
+          selectedStudentInstrument ?? undefined,
+          source === 'realtime'
+            ? { fromRemoteEvent: true, payloadLessonId: extractLessonId(payload) }
+            : { fromRemoteEvent: false }
+        );
+      };
+
       try {
-        cleanupLessons = subscribeStudentLessons(selectedStudent.id, refresh);
+        cleanupLessons = subscribeStudentLessons(
+          selectedStudent.id,
+          (payload) => refresh(payload, 'realtime')
+        );
       } catch (e) {
         console.warn('[TeacherDashboard] subscribe student_lessons erro:', e);
       }
       try {
-        cleanupExercises = subscribeStudentExercises(selectedStudent.id, refresh);
+        cleanupExercises = subscribeStudentExercises(
+          selectedStudent.id,
+          (payload) => refresh(payload, 'realtime')
+        );
       } catch (e) {
         console.warn('[TeacherDashboard] subscribe exercises erro:', e);
       }
-      fallbackInterval = window.setInterval(refresh, 30000);
+      fallbackInterval = window.setInterval(() => refresh(undefined, 'interval'), 30000);
     }
 
     return () => {
@@ -900,7 +1249,41 @@ export default function TeacherDashboard() {
     }
   };
 
-  const fetchStudentLessons = async (studentId: string, studentInstrumentName?: string) => {
+  const LOCAL_COOLDOWN_MS = 1300;
+
+  const markLocalMutation = (studentId: string, lessonId?: string) => {
+    localMutationAtRef.current = Date.now();
+    if (lessonId) {
+      pendingLessonKeysRef.current.add(`${studentId}:${lessonId}`);
+    }
+  };
+
+  const shouldSkipRemoteRefresh = (studentId: string, payloadLessonId?: string): boolean => {
+    const now = Date.now();
+    if (now - localMutationAtRef.current < LOCAL_COOLDOWN_MS) {
+      if (payloadLessonId && pendingLessonKeysRef.current.has(`${studentId}:${payloadLessonId}`)) {
+        return true;
+      }
+      if (!payloadLessonId) return true;
+    }
+    return false;
+  };
+
+  const clearPendingLocalMarks = () => {
+    const now = Date.now();
+    if (now - localMutationAtRef.current >= LOCAL_COOLDOWN_MS) {
+      pendingLessonKeysRef.current.clear();
+    }
+  };
+
+  const fetchStudentLessons = async (studentId: string, studentInstrumentName?: string, opts?: { skipIfFresh?: boolean; fromRemoteEvent?: boolean; payloadLessonId?: string }) => {
+    if (opts?.fromRemoteEvent) {
+      clearPendingLocalMarks();
+      if (shouldSkipRemoteRefresh(studentId, opts?.payloadLessonId)) {
+        console.log('[TeacherDashboard] Skipping realtime refresh due to local mutation cooldown.');
+        return;
+      }
+    }
     // Encontra o curso (instrumento) correspondente ao instrumento do aluno
     const studentCourse = courses.find(c => c.name.toLowerCase() === studentInstrumentName?.toLowerCase());
     
@@ -932,8 +1315,15 @@ export default function TeacherDashboard() {
         lessons: (mod.lessons || []).map((lesson: any) => {
           const access = (accessData || []).find(a => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
           const exercise = (exercisesData || []).find(e => e.lesson_id === lesson.id) as ExerciseRow | undefined;
-          
-          const status = resolveLessonStatus({ access, exercise });
+
+          let status = resolveLessonStatus({ access, exercise });
+
+          // Blindagem extra: se o banco tem is_locked boolean explícito e coluna status nula/ausente,
+          // força compatibilidade: is_locked=True → locked (mesmo que por algum bug o resolver volte outra coisa).
+          if (access && (access.status === undefined || access.status === null || String(access.status).trim() === '')) {
+            if (access.is_completed === true) status = 'approved';
+            else if (typeof access.is_locked === 'boolean') status = access.is_locked ? 'locked' : 'unlocked';
+          }
 
           return {
             id: lesson.id,
@@ -950,13 +1340,22 @@ export default function TeacherDashboard() {
           };
         })
       }));
+      try {
+        const json = JSON.stringify(formattedModules);
+        if (lastModulesJsonRef.current && lastModulesJsonRef.current === json) {
+          // Skip set state to avoid render loops / switch flicker
+          return;
+        }
+        lastModulesJsonRef.current = json;
+      } catch (e) {}
       setModules(formattedModules);
-      if (formattedModules.length > 0) setOpenModules([formattedModules[0].id]);
+      if (formattedModules.length > 0) setOpenModules(prev => (prev.length === 0 ? [formattedModules[0].id] : prev));
     }
   };
 
   const toggleLessonLock = async (lessonId: string, currentLocked: boolean) => {
     if (!selectedStudent) return;
+    markLocalMutation(selectedStudent.id, lessonId);
     try {
       const response = await apiFetch('/admin/toggle-lesson-lock', {
         method: 'POST',
@@ -972,8 +1371,13 @@ export default function TeacherDashboard() {
           ...mod,
           lessons: (mod.lessons || []).map(l => l.id === lessonId ? { ...l, is_locked: !currentLocked, is_completed: false, status: newStatus } : l)
         })));
+      } else {
+        localMutationAtRef.current = 0;
+        pendingLessonKeysRef.current.delete(`${selectedStudent.id}:${lessonId}`);
       }
     } catch (error) {
+      localMutationAtRef.current = 0;
+      pendingLessonKeysRef.current.delete(`${selectedStudent.id}:${lessonId}`);
       console.error('Erro ao alterar estado da aula:', error);
       apiAlert('Não foi possível liberar/bloquear a aula', error);
     }
@@ -981,6 +1385,7 @@ export default function TeacherDashboard() {
 
   const approveLesson = async (lesson: Lesson) => {
     if (!selectedStudent) return;
+    markLocalMutation(selectedStudent.id, lesson.id);
     setApprovingLesson(true);
     try {
       const response = await apiFetch('/admin/approve-lesson', {
@@ -999,8 +1404,13 @@ export default function TeacherDashboard() {
         if (selectedLessonForExercise?.id === lesson.id) {
           setSelectedLessonForExercise(prev => prev ? { ...prev, is_locked: false, is_completed: true, status: 'approved' } : null);
         }
+      } else {
+        localMutationAtRef.current = 0;
+        pendingLessonKeysRef.current.delete(`${selectedStudent.id}:${lesson.id}`);
       }
     } catch (err) {
+      localMutationAtRef.current = 0;
+      pendingLessonKeysRef.current.delete(`${selectedStudent.id}:${lesson.id}`);
       console.error('Erro ao aprovar aula:', err);
       apiAlert('Não foi possível aprovar a aula', err);
     } finally {
@@ -1486,6 +1896,7 @@ export default function TeacherDashboard() {
         <nav className="flex-1 px-4 space-y-2 mt-4">
           {[
             { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
+            { id: 'biblioteca', label: 'Biblioteca', icon: Layers3 },
             { id: 'cursos', label: 'Meus Cursos', icon: BookOpen },
             { id: 'alunos', label: 'Alunos', icon: Users },
             { id: 'config', label: 'Configurações', icon: Settings },
@@ -1527,6 +1938,7 @@ export default function TeacherDashboard() {
               <p className="text-sm font-bold truncate">{teacherName || teacherProfile?.full_name || "Professor"}</p>
               <p className="text-[0.625rem] text-zinc-500 uppercase tracking-widest font-bold">{teacherInstruments || teacherProfile?.instrument || ""}</p>
             </div>
+            <NotificationBell userId={teacherProfile?.id || teacherProfile?.profile_id} variant="teacher" pollingIntervalMs={18000} />
           </div>
           <button 
             onClick={handleLogout}
@@ -1541,7 +1953,9 @@ export default function TeacherDashboard() {
       {/* COLUNA 2 - Seletor Central */}
       <section className={cn(
         "w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50",
-        (isMobileDetailsView || activeTab === 'dashboard' || activeTab === 'config') ? "hidden md:flex" : "flex"
+        activeTab === 'biblioteca'
+          ? "hidden"
+          : (isMobileDetailsView || activeTab === 'dashboard' || activeTab === 'config') ? "hidden md:flex" : "flex"
       )}>
         <div className="p-6 space-y-4">
           {/* Botão hambúrguer para mobile */}
@@ -1754,7 +2168,7 @@ export default function TeacherDashboard() {
       {/* COLUNA 3 - Área de Ação */}
       <main className={cn(
         "flex-1 flex flex-col bg-black relative",
-        (activeTab === 'dashboard' || activeTab === 'config') ? "flex" : 
+        (activeTab === 'dashboard' || activeTab === 'config' || activeTab === 'biblioteca') ? "flex" : 
         (isMobileDetailsView ? "flex" : "hidden md:flex")
       )}>
         {activeTab === 'dashboard' ? (
@@ -2372,6 +2786,8 @@ export default function TeacherDashboard() {
               <p className="text-sm max-w-xs text-center">Escolha um curso na lista ao lado para gerenciar as aulas e conteúdos.</p>
             </div>
           )
+        ) : activeTab === 'biblioteca' ? (
+          <BibliotecaAulas />
         ) : selectedStudent ? (
           <>
             {/* Header Global */}
@@ -2397,25 +2813,28 @@ export default function TeacherDashboard() {
                   </div>
                 </div>
 
-              <div className="flex items-center bg-zinc-900 rounded-xl p-1 border border-white/5">
-                <button 
-                  onClick={() => setViewMode('chat')}
-                  className={cn(
-                    "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
-                    viewMode === 'chat' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
-                  )}
-                >
-                  Chat
-                </button>
-                <button 
-                  onClick={() => setViewMode('lessons')}
-                  className={cn(
-                    "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
-                    viewMode === 'lessons' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
-                  )}
-                >
-                  Gerenciar Aulas
-                </button>
+              <div className="flex items-center gap-2 md:gap-3">
+                <NotificationBell userId={teacherProfile?.id || teacherProfile?.profile_id} variant="teacher" pollingIntervalMs={18000} />
+                <div className="flex items-center bg-zinc-900 rounded-xl p-1 border border-white/5">
+                  <button 
+                    onClick={() => setViewMode('chat')}
+                    className={cn(
+                      "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                      viewMode === 'chat' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Chat
+                  </button>
+                  <button 
+                    onClick={() => setViewMode('lessons')}
+                    className={cn(
+                      "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                      viewMode === 'lessons' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Gerenciar Aulas
+                  </button>
+                </div>
               </div>
               </div>
             </header>
@@ -2631,21 +3050,67 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4 md:space-y-6">
-                    {modules.map((module) => (
-                      <div key={module.id} className="rounded-2xl border border-white/5 bg-zinc-900/20 overflow-hidden">
-                        <button 
-                          onClick={() => setOpenModules(prev => prev.includes(module.id) ? prev.filter(id => id !== module.id) : [...prev, module.id])}
-                          className="w-full p-4 md:p-5 flex items-center justify-between hover:bg-white/5 transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
-                              <BookOpen className="w-4 h-4 text-zinc-400" />
+                  {/* Sub-Tabs: Módulos / Prontuário / Treinos (Fase 2 + Fase 3) */}
+                  <div className="border-b border-white/5 px-4 md:px-6 pt-2 flex items-center gap-2 flex-wrap bg-[#0a0a0a]/30">
+                    <button
+                      type="button"
+                      onClick={() => setStudentLessonsSubTab('modules')}
+                      disabled={!(selectedStudentInstrument || selectedStudent.instruments.length > 0)}
+                      className={cn(
+                        "px-4 py-2 rounded-t-xl text-sm font-bold transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed",
+                        studentLessonsSubTab === 'modules'
+                          ? "bg-[#050505] text-white border border-white/5 border-b-transparent"
+                          : "text-zinc-500 hover:text-white"
+                      )}
+                    >
+                      <BookOpen size={16} /> Módulos
+                    </button>
+                    {(selectedStudentInstrument || selectedStudent.instruments.length > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => setStudentLessonsSubTab('prontuario')}
+                        className={cn(
+                          "px-4 py-2 rounded-t-xl text-sm font-bold transition-colors flex items-center gap-2",
+                          studentLessonsSubTab === 'prontuario'
+                            ? "bg-[#050505] text-[#22c55e] border border-[#22c55e]/30 border-b-transparent"
+                            : "text-zinc-500 hover:text-white"
+                        )}
+                      >
+                        <NotebookPen size={16} /> Prontuário ({selectedStudentInstrument || selectedStudent.instruments[0]})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setStudentLessonsSubTab('treinos')}
+                      className={cn(
+                        "px-4 py-2 rounded-t-xl text-sm font-bold transition-colors flex items-center gap-2",
+                        studentLessonsSubTab === 'treinos'
+                          ? "bg-[#050505] text-[#f97316] border border-[#f97316]/30 border-b-transparent"
+                          : "text-zinc-500 hover:text-white"
+                      )}
+                    >
+                      <Dumbbell size={16} /> Diário de Treino
+                      {practiceStatsTeacher.todayDone && <span className="w-2 h-2 rounded-full bg-[#22c55e]" />}
+                    </button>
+                  </div>
+
+                  {/* === VISÃO ATUAL: LISTA DE MÓDULOS (view original - 100% intacta) === */}
+                  {studentLessonsSubTab === 'modules' && (
+                    <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-4 md:space-y-6">
+                      {modules.map((module) => (
+                        <div key={module.id} className="rounded-2xl border border-white/5 bg-zinc-900/20 overflow-hidden">
+                          <button 
+                            onClick={() => setOpenModules(prev => prev.includes(module.id) ? prev.filter(id => id !== module.id) : [...prev, module.id])}
+                            className="w-full p-4 md:p-5 flex items-center justify-between hover:bg-white/5 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
+                                <BookOpen className="w-4 h-4 text-zinc-400" />
+                              </div>
+                              <span className="font-bold">{module.title}</span>
                             </div>
-                            <span className="font-bold">{module.title}</span>
-                          </div>
-                          {openModules.includes(module.id) ? <ChevronUp className="w-5 h-5 text-zinc-500" /> : <ChevronDown className="w-5 h-5 text-zinc-500" />}
-                        </button>
+                            {openModules.includes(module.id) ? <ChevronUp className="w-5 h-5 text-zinc-500" /> : <ChevronDown className="w-5 h-5 text-zinc-500" />}
+                          </button>
 
                         {openModules.includes(module.id) && (
                           <div className="px-4 md:px-5 pb-4 md:pb-5 grid grid-cols-1 gap-3">
@@ -2741,7 +3206,355 @@ export default function TeacherDashboard() {
                         )}
                       </div>
                     ))}
-                  </div>
+                    </div>
+                  )}
+
+                  {/* === VISÃO NOVA: PRONTUÁRIO POR INSTRUMENTO (FASE 2) === */}
+                  {studentLessonsSubTab === 'prontuario' && (() => {
+                    const instrumentName = selectedStudentInstrument || selectedStudent.instruments?.[0] || null;
+                    const course = courses.find(c => c.name.toLowerCase() === instrumentName?.toLowerCase()) || null;
+                    const modulesOfInstrument = (modules || []).filter((m: any) => course ? m.instrument_id === course.id : false);
+                    type AnyLesson = { id: string; module_id?: string; title?: string };
+                    const lessonsOfInstrument: AnyLesson[] = modulesOfInstrument.flatMap((m: any) => (m.lessons || []) as AnyLesson[]);
+                    return (
+                      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 bg-[#050505]">
+                        {prontuarioLoading && (
+                          <div className="flex items-center gap-3 text-sm text-zinc-400 py-10 justify-center">
+                            <Loader2 className="animate-spin" size={20} /> Carregando prontuário...
+                          </div>
+                        )}
+
+                        {!prontuarioLoading && !course && (
+                          <div className="rounded-2xl border border-white/5 bg-zinc-900/40 p-8 text-center text-zinc-500">
+                            Nenhum instrumento selecionado para este aluno.
+                          </div>
+                        )}
+
+                        {!prontuarioLoading && course && (
+                          <>
+                            {/* CARD POSIÇÃO ATUAL */}
+                            <div className="rounded-2xl border border-[#22c55e]/20 bg-gradient-to-br from-[#0d1a10]/50 to-zinc-900/20 overflow-hidden">
+                              <div className="p-4 md:p-5 border-b border-white/5 flex items-center gap-3">
+                                <NotebookPen size={18} className="text-[#22c55e]" />
+                                <div className="flex flex-col">
+                                  <h4 className="font-bold">Posição Atual</h4>
+                                  <p className="text-xs text-zinc-500">Trilha: {course.name} — {selectedStudent.full_name}</p>
+                                </div>
+                                <div className="ml-auto">
+                                  <button
+                                    type="button"
+                                    onClick={salvarProntuario}
+                                    disabled={prontuarioSaving}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#22c55e] text-black text-sm font-bold hover:brightness-110 disabled:opacity-60 active:scale-95 transition-all"
+                                  >
+                                    {prontuarioSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Salvar
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="p-4 md:p-5 space-y-5">
+                                <div className="grid md:grid-cols-2 gap-4">
+                                  <div className="space-y-2">
+                                    <label className="text-[0.6875rem] uppercase tracking-wider font-bold text-zinc-500">Módulo atual</label>
+                                    <select
+                                      value={prontuarioCurrentModuleId}
+                                      onChange={(e) => setProntuarioCurrentModuleId(e.target.value)}
+                                      className="w-full h-12 bg-zinc-900 border border-white/10 px-4 rounded-xl text-sm focus:outline-none focus:border-[#22c55e]/50 transition-colors"
+                                    >
+                                      <option value="">— Nenhum / ainda não começou —</option>
+                                      {modulesOfInstrument.map((m: any) => (
+                                        <option key={m.id} value={m.id}>{`Módulo ${m.order ?? ''} — ${m.title}`.trim()}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-[0.6875rem] uppercase tracking-wider font-bold text-zinc-500">Última aula concluída</label>
+                                    <select
+                                      value={prontuarioLastLessonId}
+                                      onChange={(e) => setProntuarioLastLessonId(e.target.value)}
+                                      className="w-full h-12 bg-zinc-900 border border-white/10 px-4 rounded-xl text-sm focus:outline-none focus:border-[#22c55e]/50 transition-colors"
+                                    >
+                                      <option value="">— Nenhuma —</option>
+                                      {lessonsOfInstrument.map((l: any, idx: number) => (
+                                        <option key={l.id} value={l.id}>
+                                          Aula {l.order ?? (idx + 1)} — {l.title || l.id.slice(0, 8)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <label className="text-[0.6875rem] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-2">
+                                    <FileText size={14} /> Observação sobre a posição atual
+                                  </label>
+                                  <textarea
+                                    value={prontuarioPositionNote}
+                                    onChange={(e) => setProntuarioPositionNote(e.target.value)}
+                                    placeholder="Ex: Travou na pestana do acorde F. Praticar 10min/dia antes da próxima aula..."
+                                    rows={3}
+                                    className="w-full bg-zinc-900 border border-white/10 px-4 py-3 rounded-xl text-sm focus:outline-none focus:border-[#22c55e]/50 transition-colors resize-none"
+                                  />
+                                </div>
+                                {prontuarioEnrollment && (
+                                  <div className="flex flex-wrap items-center gap-4 pt-2 text-[0.6875rem] text-zinc-500 border-t border-white/5">
+                                    <span>ID: <span className="font-mono">{prontuarioEnrollment.id.slice(0, 10)}...</span></span>
+                                    <span>Criado em: {new Date(prontuarioEnrollment.created_at).toLocaleDateString('pt-BR')}</span>
+                                    {prontuarioEnrollment.updated_at && (
+                                      <span>Última atualização: {new Date(prontuarioEnrollment.updated_at).toLocaleString('pt-BR')}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* FORM ADICIONAR ANOTAÇÃO */}
+                            <div className="rounded-2xl border border-white/5 bg-zinc-900/20 overflow-hidden">
+                              <div className="p-4 md:p-5 border-b border-white/5 flex items-center gap-3">
+                                <Plus size={18} className="text-zinc-300" />
+                                <h4 className="font-bold">Adicionar Anotação</h4>
+                              </div>
+                              <div className="p-4 md:p-5 space-y-3">
+                                <input
+                                  type="text"
+                                  value={novaNotaTitulo}
+                                  onChange={(e) => setNovaNotaTitulo(e.target.value)}
+                                  placeholder="Título (opcional): Ex: Observações pós-aula 12/08"
+                                  className="w-full h-11 bg-zinc-900 border border-white/10 px-4 rounded-xl text-sm focus:outline-none focus:border-[#22c55e]/40 transition-colors"
+                                />
+                                <textarea
+                                  value={novaNotaCorpo}
+                                  onChange={(e) => setNovaNotaCorpo(e.target.value)}
+                                  placeholder="Escreva aqui a anotação pedagógica (postura, dificuldades, próximos passos)..."
+                                  rows={4}
+                                  className="w-full bg-zinc-900 border border-white/10 px-4 py-3 rounded-xl text-sm focus:outline-none focus:border-[#22c55e]/40 transition-colors resize-none"
+                                />
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={adicionarAnotacao}
+                                    disabled={novaNotaSalvando || !novaNotaCorpo.trim()}
+                                    className="flex items-center gap-2 px-5 py-2 rounded-xl bg-zinc-100 text-black text-sm font-bold hover:bg-white disabled:opacity-50 active:scale-95 transition-all"
+                                  >
+                                    {novaNotaSalvando ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                                    Adicionar
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* HISTÓRICO DE ANOTAÇÕES */}
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between px-2">
+                                <h4 className="font-bold text-zinc-200">Histórico ({prontuarioNotes.length})</h4>
+                              </div>
+                              {prontuarioNotes.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-zinc-500 text-sm">
+                                  Nenhuma anotação registrada para este instrumento ainda.
+                                </div>
+                              )}
+                              {prontuarioNotes.map((n) => (
+                                <div key={n.id} className="rounded-2xl border border-white/5 bg-zinc-900/30 p-4 md:p-5">
+                                  {editingNoteId === n.id ? (
+                                    <div className="space-y-3">
+                                      <input
+                                        type="text"
+                                        value={editingNoteTitulo}
+                                        onChange={(e) => setEditingNoteTitulo(e.target.value)}
+                                        placeholder="Título"
+                                        className="w-full h-10 bg-zinc-800 border border-white/10 px-3 rounded-lg text-sm focus:outline-none focus:border-[#22c55e]/40"
+                                      />
+                                      <textarea
+                                        value={editingNoteCorpo}
+                                        onChange={(e) => setEditingNoteCorpo(e.target.value)}
+                                        rows={4}
+                                        className="w-full bg-zinc-800 border border-white/10 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-[#22c55e]/40 resize-none"
+                                      />
+                                      <div className="flex items-center justify-end gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingNoteId(null)}
+                                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+                                        >Cancelar</button>
+                                        <button
+                                          type="button"
+                                          onClick={() => editarAnotacao(n.id)}
+                                          disabled={editingNoteSalvando}
+                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#22c55e] text-black text-xs font-bold disabled:opacity-60 active:scale-95 transition-all"
+                                        >
+                                          {editingNoteSalvando ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Salvar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1 min-w-0">
+                                          {(n.title || '').trim() ? (
+                                            <h5 className="font-bold text-sm mb-2">{n.title}</h5>
+                                          ) : null}
+                                          <pre className="whitespace-pre-wrap break-words text-sm text-zinc-300 font-sans">{n.body}</pre>
+                                          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.6875rem] text-zinc-500">
+                                            <span>Por: <span className="text-zinc-300 font-medium">{n.profiles?.full_name || n.profiles?.username || 'Professor'}</span></span>
+                                            <span>{new Date(n.created_at).toLocaleString('pt-BR')}</span>
+                                            {n.updated_at && new Date(n.updated_at).getTime() > new Date(n.created_at).getTime() + 2000 && (
+                                              <span>Editado em: {new Date(n.updated_at).toLocaleString('pt-BR')}</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingNoteId(n.id);
+                                              setEditingNoteTitulo(n.title || '');
+                                              setEditingNoteCorpo(n.body);
+                                            }}
+                                            className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"
+                                            title="Editar"
+                                          >
+                                            <Pencil size={14} />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (confirm(`Excluir esta anotação?`)) void excluirAnotacao(n.id);
+                                            }}
+                                            disabled={deletedNoteId === n.id}
+                                            className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+                                            title="Excluir"
+                                          >
+                                            {deletedNoteId === n.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* === VISÃO NOVA: DIÁRIO DE TREINO (FASE 3 - Professor) === */}
+                  {studentLessonsSubTab === 'treinos' && (
+                    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 bg-[#050505]">
+                      {practiceLogsLoading && (
+                        <div className="flex items-center gap-3 text-sm text-zinc-400 py-10 justify-center">
+                          <Loader2 className="animate-spin" size={20} /> Carregando histórico de treinos...
+                        </div>
+                      )}
+
+                      {!practiceLogsLoading && (
+                        <>
+                          {/* Header Stats */}
+                          <div className="rounded-2xl border border-[#f97316]/15 bg-gradient-to-br from-[#1a0d05]/40 via-zinc-900/30 to-black overflow-hidden">
+                            <div className="p-4 md:p-5 border-b border-white/5 flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-[#f97316]/15 flex items-center justify-center">
+                                <Dumbbell className="w-5 h-5 text-[#f97316]" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-white">Consistência de Treino</h4>
+                                <p className="text-xs text-zinc-500">Aluno: {selectedStudent?.full_name}</p>
+                              </div>
+                              <div className="ml-auto flex items-center gap-2">
+                                {practiceStatsTeacher.todayDone ? (
+                                  <span className="px-2.5 py-1 rounded-full bg-[#22c55e]/15 text-[#22c55e] text-[0.6875rem] font-black uppercase tracking-wider border border-[#22c55e]/30">Hoje treinou ✅</span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-full bg-zinc-800/60 text-zinc-400 text-[0.6875rem] font-black uppercase tracking-wider border border-white/5">Sem registro hoje</span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => fetchPracticeLogs(selectedStudent, true)}
+                                  className="w-9 h-9 rounded-lg border border-white/10 bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 flex items-center justify-center transition-all active:scale-95"
+                                  title="Atualizar"
+                                >
+                                  <Loader2 size={16} className={cn(practiceLogsLoading && 'animate-spin')} />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="p-4 md:p-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div className="rounded-xl bg-black/40 border border-white/5 p-3.5">
+                                <div className="text-zinc-500 text-[0.65rem] font-black uppercase tracking-wider mb-1">7 dias</div>
+                                <div className="text-white font-black text-2xl tabular-nums">{practiceStatsTeacher.last7Min}<span className="text-zinc-500 text-xs font-bold ml-0.5">min</span></div>
+                                <div className="text-zinc-500 text-[0.6875rem] mt-1">Total semana</div>
+                              </div>
+                              <div className="rounded-xl bg-black/40 border border-white/5 p-3.5">
+                                <div className="text-zinc-500 text-[0.65rem] font-black uppercase tracking-wider mb-1">30 dias</div>
+                                <div className="text-white font-black text-2xl tabular-nums">{practiceStatsTeacher.last30Min}<span className="text-zinc-500 text-xs font-bold ml-0.5">min</span></div>
+                                <div className="text-zinc-500 text-[0.6875rem] mt-1">Dias ativos: <span className="text-white font-bold">{practiceStatsTeacher.daysTrained}</span></div>
+                              </div>
+                              <div className="rounded-xl bg-black/40 border border-white/5 p-3.5">
+                                <div className="text-zinc-500 text-[0.65rem] font-black uppercase tracking-wider mb-1">Sequência</div>
+                                <div className="text-white font-black text-2xl tabular-nums flex items-center gap-1">
+                                  {practiceStatsTeacher.streak}<span className="text-zinc-500 text-xs font-bold">dias</span>
+                                  {practiceStatsTeacher.streak >= 3 && <span className="text-base">🔥</span>}
+                                </div>
+                                <div className="text-zinc-500 text-[0.6875rem] mt-1">Dias consecutivos</div>
+                              </div>
+                              <div className="rounded-xl bg-black/40 border border-white/5 p-3.5">
+                                <div className="text-zinc-500 text-[0.65rem] font-black uppercase tracking-wider mb-1">Total geral</div>
+                                <div className="text-white font-black text-2xl tabular-nums">{Math.floor(practiceStatsTeacher.totalMin / 60)}<span className="text-zinc-500 text-xs font-bold ml-0.5">h</span> {practiceStatsTeacher.totalMin % 60}<span className="text-zinc-500 text-xs font-bold ml-0.5">m</span></div>
+                                <div className="text-zinc-500 text-[0.6875rem] mt-1">Todos os registros</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Histórico completo */}
+                          <div className="rounded-2xl border border-white/5 bg-zinc-900/20 overflow-hidden">
+                            <div className="px-4 md:px-5 py-3.5 border-b border-white/5 flex items-center gap-2">
+                              <CalendarDays className="w-4 h-4 text-[#f97316]" />
+                              <span className="text-white font-bold text-sm">Histórico de treinos</span>
+                              <span className="ml-auto text-zinc-500 text-xs font-bold">{practiceLogs.length} registros</span>
+                            </div>
+
+                            {!practiceLogs.length ? (
+                              <div className="p-10 text-center">
+                                <Dumbbell className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+                                <p className="text-zinc-500 font-bold">Nenhum treino registrado ainda</p>
+                                <p className="text-zinc-600 text-xs mt-1">Quando o aluno registrar um treino, ele aparecerá aqui.</p>
+                              </div>
+                            ) : (
+                              <div className="divide-y divide-white/5">
+                                {practiceLogs.map((log) => {
+                                  const d = new Date(log.practice_date + 'T00:00:00');
+                                  const diaSemana = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()];
+                                  const dataStr = `${diaSemana}, ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+                                  const durH = Math.floor((log.duration_minutes||0) / 60);
+                                  const durM = (log.duration_minutes||0) % 60;
+                                  return (
+                                    <div key={log.id} className="p-4 md:p-5 hover:bg-white/[0.02] transition-colors">
+                                      <div className="flex items-start gap-4">
+                                        <div className="w-11 h-11 rounded-xl bg-[#f97316]/10 border border-[#f97316]/20 flex items-center justify-center flex-shrink-0">
+                                          <Dumbbell className="w-5 h-5 text-[#f97316]" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                                            <span className="text-white font-bold text-sm">{dataStr}</span>
+                                            <span className="px-2 py-0.5 rounded-full bg-[#22c55e]/10 text-[#22c55e] text-[0.6875rem] font-black tabular-nums border border-[#22c55e]/20">
+                                              {durH > 0 ? `${durH}h ` : ''}{durM > 0 ? `${durM}min` : (durH > 0 ? '' : `${log.duration_minutes}min`)}
+                                            </span>
+                                          </div>
+                                          {log.notes ? (
+                                            <p className="text-zinc-300 text-sm whitespace-pre-wrap break-words leading-relaxed">{log.notes}</p>
+                                          ) : (
+                                            <p className="text-zinc-600 text-xs italic">Sem observações</p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                 </div>
               )}
             </div>

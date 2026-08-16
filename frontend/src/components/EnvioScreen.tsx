@@ -131,6 +131,8 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
   const [selectedExerciseForView, setSelectedExerciseForView] = useState<{ id: string; title: string; video_url: string | null } | null>(null);
   const [primaryInstrument, setPrimaryInstrument] = useState<InstrumentKey>('guitarra');
   const exerciseVideoRef = useRef<HTMLVideoElement>(null);
+  const lastModulesJsonRef = useRef<string>('');
+  const localMutationAtRef = useRef<number>(0);
 
   const fetchData = async () => {
     try {
@@ -224,7 +226,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
               const access = (accessData || []).find((a: any) => a.lesson_id === lesson.id) as StudentLessonRow | undefined;
               const exercise = (exercisesData || []).find((e: any) => e.lesson_id === lesson.id) as ExerciseRow | undefined;
 
-              const status: UnifiedLessonStatus = resolveLessonStatus({ access, exercise });
+              let status: UnifiedLessonStatus = resolveLessonStatus({ access, exercise });
+
+              // Blindagem: sem coluna status, força uso de is_locked booleano do banco
+              if (access && (access.status === undefined || access.status === null || String(access.status).trim() === '')) {
+                if (access.is_completed === true) status = 'approved';
+                else if (typeof access.is_locked === 'boolean') status = access.is_locked ? 'locked' : 'unlocked';
+              }
 
               return {
                 id: lesson.id,
@@ -250,10 +258,17 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
             };
           });
 
-          setModules(assembledModules);
-          
-          const firstPending = assembledModules.find(m => m.status === 'pending');
-          if (firstPending && openModules.length === 0) setOpenModules([firstPending.id]);
+          let shouldSet = true;
+          try {
+            const json = JSON.stringify(assembledModules);
+            if (lastModulesJsonRef.current && lastModulesJsonRef.current === json) shouldSet = false;
+            else lastModulesJsonRef.current = json;
+          } catch {}
+          if (shouldSet) {
+            setModules(assembledModules);
+            const firstPending = assembledModules.find(m => m.status === 'pending');
+            if (firstPending && openModules.length === 0) setOpenModules([firstPending.id]);
+          }
 
           const totalLessons = assembledModules.reduce((acc, m) => acc + m.lessons.length, 0);
           const completedLessons = assembledModules.reduce((acc, m) => 
@@ -274,14 +289,18 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
   };
 
   useEffect(() => {
+    lastModulesJsonRef.current = '';
     fetchData();
   }, [studentId]);
 
   useEffect(() => {
+    const COOLDOWN_MS = 1200;
     const onLessonChange = (_payload: any) => {
+      if (Date.now() - localMutationAtRef.current < COOLDOWN_MS) return;
       fetchData();
     };
     const onExerciseChange = (_payload: any) => {
+      if (Date.now() - localMutationAtRef.current < COOLDOWN_MS) return;
       fetchData();
     };
     let cleanupLessons: RealtimeCleanupFn = () => {};
@@ -330,6 +349,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
   const handleUpload = async () => {
     if (!selectedFile || !selectedLessonForUpload || !studentId) return;
+    localMutationAtRef.current = Date.now();
+    setModules(prev => prev.map(mod => ({
+      ...mod,
+      lessons: (mod.lessons || []).map(l => l.id === selectedLessonForUpload.id
+        ? { ...l, status: 'pending_review' as UnifiedLessonStatus }
+        : l)
+    })));
 
     setUploading(true);
     setUploadProgress(0);
@@ -387,6 +413,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
   const handleDeleteExercise = async (lessonId: string) => {
     if (!window.confirm('Deseja excluir este treino enviado?')) return;
+    localMutationAtRef.current = Date.now();
+    setModules(prev => prev.map(mod => ({
+      ...mod,
+      lessons: (mod.lessons || []).map(l => l.id === lessonId
+        ? { ...l, status: 'unlocked' as UnifiedLessonStatus, exercise_video_url: null, exercise_thumbnail_url: null, has_exercise: false }
+        : l)
+    })));
     try {
       await apiFetch('/admin/delete-exercise', {
         method: 'DELETE',

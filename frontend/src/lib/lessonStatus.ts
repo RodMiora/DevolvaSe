@@ -38,7 +38,11 @@ export function resolveLessonStatus(params: {
 }): UnifiedLessonStatus {
   const { access, exercise } = params;
 
-  if (access?.status) {
+  // Aprovacao tem maior prioridade de todas (se is_completed = True → approved sempre)
+  if (access?.is_completed === true) return 'approved';
+
+  // Se tem coluna status explicitamente setada no banco, usa ela (prioridade #1)
+  if (access?.status != null && String(access.status).trim() !== '') {
     const s = String(access.status).trim().toLowerCase();
     if (s === 'locked' || s === 'bloqueada' || s === 'bloqueado') return 'locked';
     if (s === 'unlocked' || s === 'liberada' || s === 'liberado' || s === 'not-submitted' || s === 'not_submitted') return 'unlocked';
@@ -53,18 +57,24 @@ export function resolveLessonStatus(params: {
     ) {
       return 'pending_review';
     }
+    // Status desconhecido: ignora, usa fallback booleano abaixo
   }
 
-  if (access?.is_completed === true) return 'approved';
+  // Exercício enviado SEM ainda aprovação → pending_review
   if (exercise) return 'pending_review';
-  if (access && access.is_locked === false) return 'unlocked';
+
+  // Fallback primário: coluna booleana `is_locked` (existe SEMPRE no banco, mesmo sem coluna status)
   if (access && typeof access.is_locked === 'boolean') {
     return access.is_locked ? 'locked' : 'unlocked';
   }
-  if (access) {
-    return 'unlocked';
+
+  // Nenhum registro em student_lessons → aula bloqueada por padrão (seguro)
+  if (!access) {
+    return 'locked';
   }
-  return 'locked';
+
+  // Ultimo recurso: registro existe mas sem is_locked nem status → assume liberada (menos pior que travar)
+  return 'unlocked';
 }
 
 export function isLessonLocked(status: UnifiedLessonStatus): boolean {

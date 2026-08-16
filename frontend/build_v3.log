@@ -1,0 +1,30 @@
+﻿
+> frontend@0.1.0 build
+> next build
+
+Ôû▓ Next.js 16.2.4 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Ô£ô Compiled successfully in 26.9s
+  Running TypeScript ...
+npm.cmd : Failed to type check.
+No linha:1 caractere:55
++ ... \Projeto meu de Música\frontend" ; & "npm.cmd" run build 2>&1 | Out-F ...
++                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Failed to type check.:String) [],     RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+./src/components/TeacherDashboard.tsx:346:11
+Type error: Object literal may only specify known properties, and 'student_id' does not exist in type 'ReadableStream<any> | Blob | ArrayBuffer | ArrayBufferView<ArrayBuffer> | FormData | URLSearchParams'.
+
+  [90m344 |[0m         method: [32m'POST'[0m,
+  [90m345 |[0m         body: {
+[31m[1m>[0m [90m346 |[0m           student_id: selectedStudent.id,
+  [90m    |[0m           [31m[1m^[0m
+  [90m347 |[0m           instrument_id: course.id,
+  [90m348 |[0m           current_module_id: prontuarioCurrentModuleId.trim() || [36mnull[0m,
+  [90m349 |[0m           last_completed_lesson_id: prontuarioLastLessonId.trim() || [36mnull[0m,
+Next.js build worker exited with code: 1 and signal: null
+1

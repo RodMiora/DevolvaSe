@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import Logo from "./Logo";
 import { TabNavigationProvider, TabId } from "./TabNavigationContext";
+import NotificationBell from "./NotificationBell";
 
 const TABS = [
   { id: "chat", label: "Chat" },
@@ -31,12 +32,14 @@ export default function MobileLayout({
   envio,
   hasChatNotification = false,
   onLogout,
+  userId,
 }: {
   chat: React.ReactNode;
   aulas: React.ReactNode;
   envio: React.ReactNode;
   hasChatNotification?: boolean;
   onLogout: () => void;
+  userId?: string | null;
 }) {
   const [[page, direction], setPage] = useState([1, 0]);
   const activeTab = page;
@@ -79,15 +82,19 @@ export default function MobileLayout({
     <div className="fixed inset-0 w-screen h-screen flex flex-col bg-black text-white overflow-hidden select-none font-sans">
       {/* Header Fixo - Altura fixa de 80px */}
       <header className="h-[80px] flex flex-col justify-center bg-black z-50 flex-shrink-0">
-        <div className="flex justify-between items-center px-4 mb-2">
-          <div className="w-16"></div> {/* Espaçador para centralizar o logo */}
-          <Logo className="scale-90" />
+        <div className="flex justify-between items-center px-3 mb-2">
           <button
             onClick={onLogout}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-lg transition-colors"
+            className="px-2.5 py-1.5 bg-red-600/90 hover:bg-red-700 text-white font-semibold text-[11px] rounded-lg transition-colors"
           >
             Sair
           </button>
+          <div className="flex items-center gap-1">
+            <Logo className="scale-90" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <NotificationBell userId={userId} variant="student" pollingIntervalMs={20000} />
+          </div>
         </div>
         
         {/* Tabs Navigation */}

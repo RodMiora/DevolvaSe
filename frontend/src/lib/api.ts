@@ -92,12 +92,14 @@ export async function extractDetailText(resp: Response): Promise<string> {
 
 export async function apiFetch(
   endpoint: string,
-  init: RequestInit = {},
+  init: (Omit<RequestInit, 'body'> & { body?: BodyInit | Record<string, unknown> | unknown[] | string | number | boolean | null }) = {},
   opts: { bearer?: boolean; jsonBody?: boolean; prefix?: string; throwOnError?: boolean } = {}
 ): Promise<Response> {
   const { bearer = true, jsonBody = true, prefix = 'Erro', throwOnError = true } = opts;
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
   const headers = new Headers(init.headers || {});
+  let processedBody: BodyInit | null | undefined = init.body as BodyInit | null | undefined;
+
   if (bearer) {
     const token = await getApiBearerToken();
     if (token && !headers.has('Authorization')) {
@@ -114,23 +116,30 @@ export async function apiFetch(
       (typeof body === 'object' && body !== null && typeof (body as any).getReader === 'function');
 
     if (!isBinaryLike) {
-      // Auto-stringify objetos literais e arrays para JSON (evita [object Object] no body)
-      if (body !== null && body !== undefined && typeof body === 'object') {
-        init = { ...init, body: JSON.stringify(body) };
+      if (body !== null && body !== undefined) {
+        if (typeof body === 'object') {
+          processedBody = JSON.stringify(body);
+        } else if (typeof body === 'number' || typeof body === 'boolean') {
+          processedBody = JSON.stringify(body);
+        } else {
+          processedBody = body as string;
+        }
+      } else {
+        processedBody = body as null | undefined;
       }
-      // Sempre define Content-Type: application/json para bodies textuais/stringificados,
-      // exceto se o caller explicitamente já definiu outro content-type.
       if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
       }
     }
   }
   try {
-    const response = await fetch(url, {
+    const fetchInit: RequestInit = {
       credentials: 'include',
       ...init,
       headers,
-    });
+      body: processedBody,
+    };
+    const response = await fetch(url, fetchInit);
     if (throwOnError && !response.ok) {
       const detail = await extractDetailText(response);
       throw new Error(formatApiError({ prefix, response, detailFallback: detail, url }));
