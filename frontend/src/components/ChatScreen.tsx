@@ -116,8 +116,28 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+
+      const pickMimeType = (): string | undefined => {
+        const candidates = [
+          'audio/mp4',
+          'audio/mp4;codecs=mp4a.40.2',
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+        ];
+        if (typeof (window as any).MediaRecorder === 'undefined') return undefined;
+        for (const t of candidates) {
+          try {
+            if (MediaRecorder.isTypeSupported(t)) return t;
+          } catch { /* noop */ }
+        }
+        return undefined;
+      };
+
+      const mimeType = pickMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       const chunks: Blob[] = [];
+      const negotiatedType: string = mimeType || (recorder as any).mimeType || 'audio/webm';
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -126,16 +146,27 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
       };
 
       recorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        await sendAudioMessage(audioBlob);
+        const audioBlob = new Blob(chunks, { type: negotiatedType });
+        await sendAudioMessage(audioBlob, negotiatedType);
       };
 
       setMediaRecorder(recorder);
       setAudioChunks(chunks);
       recorder.start();
       setIsRecording(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao iniciar gravação:', err);
+      const name = err?.name || '';
+      const msg = err?.message || String(err || '');
+      if (name === 'NotAllowedError' || /permission|denied|permitir|acesso|microfone/i.test(msg)) {
+        alert('Permissão de microfone negada. Por favor, habilite o microfone nas configurações do navegador para gravar áudios.');
+      } else if (name === 'NotFoundError' || name === 'OverconstrainedError' || /device|microfone|notfound/i.test(msg)) {
+        alert('Microfone não encontrado no dispositivo. Verifique se ele está conectado e permitido.');
+      } else if (name === 'NotReadableError' || /locked|busy|em uso/i.test(msg)) {
+        alert('Microfone está em uso por outro app. Feche outros apps que estejam usando o microfone e tente novamente.');
+      } else {
+        alert(`Não foi possível iniciar a gravação: ${msg || name || 'erro desconhecido'}`);
+      }
     }
   };
 
@@ -143,15 +174,20 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     if (mediaRecorder && isRecording) {
       mediaRecorder.stop();
       setIsRecording(false);
-      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      try {
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      } catch { /* noop */ }
     }
   };
 
-  const sendAudioMessage = async (audioBlob: Blob) => {
+  const sendAudioMessage = async (audioBlob: Blob, negotiatedType?: string) => {
+    const safeExt = ((negotiatedType || audioBlob.type || '').toLowerCase().includes('mp4') || (negotiatedType || '').toLowerCase().includes('aac')) ? 'm4a'
+      : ((negotiatedType || audioBlob.type || '').toLowerCase().includes('ogg') ? 'ogg' : 'webm');
+    const fileName = `audio_gravado.${safeExt}`;
     const formData = new FormData();
     formData.append('sender_id', userId);
     formData.append('receiver_id', '54268554-9b11-4986-9c02-c1637b0863fc');
-    formData.append('audio', audioBlob, 'audio.webm');
+    formData.append('audio', audioBlob, fileName);
 
     try {
       const response = await apiFetch('/upload-audio', {
@@ -227,23 +263,38 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
     const matches = text.match(urlRegex) || [];
     return matches.filter(url => {
       const lower = url.toLowerCase();
-      if (/\.(mp4|webm|mov|avi|mkv|m4v|ogg|ogv)(\?|$)/i.test(url)) return true;
-      if (lower.includes('r2.dev')) return true;
-      if (lower.includes('cloudflare')) return true;
+      if (/\.(mp4|webm|mov|avi|mkv|m4v|ogv)(\?|$)/i.test(url)) return true;
+      if (lower.includes('/video/')) return true;
+      if (lower.includes('r2.dev') && lower.match(/\.(mp4|webm|mov|m4v|ogv)(\?|$)/)) return true;
+      if (lower.includes('cloudflare') && lower.match(/\.(mp4|webm|mov|m4v|ogv)(\?|$)/)) return true;
       return false;
     });
   };
 
-  // Helper: Renderiza texto com quebras de linha + player de video embutido se encontrar URL
+  // Helper: Extrai URLs de audio do conteudo de texto (fallback quando type != audio)
+  const extractAudioUrlsFromText = (text: string): string[] => {
+    if (!text) return [];
+    const urlRegex = /https?:\/\/[^\s<>"'`]+/g;
+    const matches = text.match(urlRegex) || [];
+    return matches.filter(url => {
+      const lower = url.toLowerCase();
+      if (/\.(mp3|m4a|wav|ogg|oga|opus|webm|aac|flac)(\?|$)/i.test(url)) return true;
+      if (lower.includes('/audio/')) return true;
+      if (lower.includes('r2.dev') && lower.match(/audio\/|\.(mp3|m4a|wav|ogg|opus|webm|aac)(\?|$)/)) return true;
+      return false;
+    });
+  };
+
+  // Helper: Renderiza texto com quebras de linha + player de video/audio embutido se encontrar URL
   const renderTextContentWithVideo = (content: string) => {
     const videoUrls = extractVideoUrlsFromText(content);
-    if (videoUrls.length === 0) {
+    const audioUrls = extractAudioUrlsFromText(content);
+    if (videoUrls.length === 0 && audioUrls.length === 0) {
       return <p className="text-[0.9375rem] leading-snug font-medium pr-8 whitespace-pre-wrap">{content}</p>;
     }
     let displayText = content;
-    videoUrls.forEach(url => {
-      displayText = displayText.replace(url, '');
-    });
+    videoUrls.forEach(url => { displayText = displayText.replace(url, ''); });
+    audioUrls.forEach(url => { displayText = displayText.replace(url, ''); });
     displayText = displayText.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     
     return (
@@ -253,7 +304,7 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
         )}
         {videoUrls.map((url, idx) => (
           <video
-            key={`${url}-${idx}`}
+            key={`v-${url}-${idx}`}
             src={url}
             controls
             preload="metadata"
@@ -261,14 +312,23 @@ export default function ChatScreen({ userId, receiverId }: { userId: string, rec
             playsInline
           />
         ))}
+        {audioUrls.map((url, idx) => (
+          <audio
+            key={`a-${url}-${idx}`}
+            src={url}
+            controls
+            preload="metadata"
+            className="w-full max-w-[280px] mt-1"
+          />
+        ))}
       </div>
     );
   };
 
   return (
-    <div className="flex flex-col h-full bg-black w-full overflow-hidden">
+    <div className="flex flex-col h-full bg-black w-full">
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 space-y-8 w-full">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 space-y-8 w-full" style={{ WebkitOverflowScrolling: "touch" }}>
         {messages.map((msg) => {
           const isMe = msg.sender_id === userId;
           const mediaUrl = (msg as any).media_url || msg.content;

@@ -1555,11 +1555,23 @@ async def upload_exercise(
         
         video_url = f"{settings.R2_PUBLIC_URL}/{r2_key}"
         
+        def _extract_r2_key(url: Optional[str]) -> Optional[str]:
+            if not url:
+                return None
+            if settings.R2_PUBLIC_URL and settings.R2_PUBLIC_URL in url:
+                return url.replace(settings.R2_PUBLIC_URL.rstrip('/') + '/', '')
+            if settings.R2_ENDPOINT_URL and settings.R2_ENDPOINT_URL in url:
+                return url.replace(settings.R2_ENDPOINT_URL.rstrip('/') + '/' + settings.R2_BUCKET_NAME + '/', '')
+            if '.dev/' in url:
+                return url.split('.dev/', 1)[1]
+            return None
+
         # Insert na tabela exercises usando Supabase admin (via thread pool)
         from concurrent.futures import ThreadPoolExecutor
         import asyncio
         
         new_exercise = None
+        deleted_old_r2 = False
         
         def sync_db_ops():
             try:
@@ -1569,7 +1581,7 @@ async def upload_exercise(
                 print(f"   video_url: {video_url}")
 
                 def _check_existing(c: Client):
-                    return c.table('exercises').select('id').eq('student_id', student_id).eq('lesson_id', lesson_id).execute()
+                    return c.table('exercises').select('id, video_url').eq('student_id', student_id).eq('lesson_id', lesson_id).order('created_at', desc=True).limit(1).execute()
                 existing_result = execute_supabase_with_retry(
                     _check_existing,
                     operation_label=f"upload-exercise:exists({student_id[:8]}..,{lesson_id[:8]}..)"
@@ -1577,12 +1589,25 @@ async def upload_exercise(
                 print(f"[DEBUG UPLOAD-EXERCISE] Existentes: {existing_result.data}")
 
                 if existing_result.data and len(existing_result.data) > 0:
+                    existing = existing_result.data[0]
+                    old_video_url = existing.get('video_url') or None
+                    old_key = _extract_r2_key(old_video_url)
+                    if old_key and old_key != r2_key:
+                        nonlocal deleted_old_r2
+                        try:
+                            s3_client.delete_object(Bucket=settings.R2_BUCKET_NAME, Key=old_key)
+                            deleted_old_r2 = True
+                            print(f"[UPLOAD-EXERCISE] Removido vídeo antigo do R2: {old_key}")
+                        except Exception as s3e:
+                            print(f"[UPLOAD-EXERCISE] Falha ao deletar vídeo antigo R2 (continuando): {s3e}")
+
                     def _do_update(c: Client):
                         return c.table('exercises').update({
                             'video_url': video_url,
                             'thumbnail_url': None,
-                            'status': 'submitted'
-                        }).eq('id', existing_result.data[0]['id']).execute()
+                            'status': 'submitted',
+                            'created_at': 'now()'
+                        }).eq('id', existing['id']).execute()
                     update_result = execute_supabase_with_retry(
                         _do_update,
                         operation_label=f"upload-exercise:update({student_id[:8]}..,{lesson_id[:8]}..)"

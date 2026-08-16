@@ -153,7 +153,7 @@ export default function MobileLayout({
             className="absolute inset-0 w-full h-full"
           >
             <TabNavigationProvider value={{ navigateToTab: (t: TabId) => goToTab(t) }}>
-              <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col">
+              <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col" style={{ WebkitOverflowScrolling: "touch" }}>
                 {getTabContent(activeTab)}
               </div>
             </TabNavigationProvider>

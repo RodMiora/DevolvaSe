@@ -1185,8 +1185,28 @@ export default function TeacherDashboard() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+
+      const pickMimeType = (): string | undefined => {
+        const candidates = [
+          'audio/mp4',
+          'audio/mp4;codecs=mp4a.40.2',
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+        ];
+        if (typeof (window as any).MediaRecorder === 'undefined') return undefined;
+        for (const t of candidates) {
+          try {
+            if (MediaRecorder.isTypeSupported(t)) return t;
+          } catch { /* noop */ }
+        }
+        return undefined;
+      };
+
+      const mimeType = pickMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       const chunks: Blob[] = [];
+      const negotiatedType: string = mimeType || (recorder as any).mimeType || 'audio/webm';
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -1195,16 +1215,27 @@ export default function TeacherDashboard() {
       };
 
       recorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        await sendAudioMessage(audioBlob);
+        const audioBlob = new Blob(chunks, { type: negotiatedType });
+        await sendAudioMessage(audioBlob, negotiatedType);
       };
 
       setMediaRecorder(recorder);
       setAudioChunks(chunks);
       recorder.start();
       setIsRecording(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao iniciar gravação:', err);
+      const name = err?.name || '';
+      const msg = err?.message || String(err || '');
+      if (name === 'NotAllowedError' || /permission|denied|permitir|acesso|microfone/i.test(msg)) {
+        alert('Permissão de microfone negada. Por favor, habilite o microfone nas configurações do navegador para gravar áudios.');
+      } else if (name === 'NotFoundError' || name === 'OverconstrainedError' || /device|microfone|notfound/i.test(msg)) {
+        alert('Microfone não encontrado no dispositivo. Verifique se ele está conectado e permitido.');
+      } else if (name === 'NotReadableError' || /locked|busy|em uso/i.test(msg)) {
+        alert('Microfone está em uso por outro app. Feche outros apps que estejam usando o microfone e tente novamente.');
+      } else {
+        alert(`Não foi possível iniciar a gravação: ${msg || name || 'erro desconhecido'}`);
+      }
     }
   };
 
@@ -1212,20 +1243,25 @@ export default function TeacherDashboard() {
     if (mediaRecorder && isRecording) {
       mediaRecorder.stop();
       setIsRecording(false);
-      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      try {
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      } catch { /* noop */ }
     }
   };
 
-  const sendAudioMessage = async (audioBlob: Blob) => {
+  const sendAudioMessage = async (audioBlob: Blob, negotiatedType?: string) => {
     if (!selectedStudent) return;
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    const safeExt = ((negotiatedType || audioBlob.type || '').toLowerCase().includes('mp4') || (negotiatedType || '').toLowerCase().includes('aac')) ? 'm4a'
+      : (((negotiatedType || audioBlob.type || '').toLowerCase().includes('ogg')) ? 'ogg' : 'webm');
+    const fileName = `audio_gravado.${safeExt}`;
     const formData = new FormData();
     formData.append('sender_id', user.id);
     formData.append('receiver_id', selectedStudent.id);
-    formData.append('audio', audioBlob, 'audio.webm');
+    formData.append('audio', audioBlob, fileName);
 
     try {
       const response = await apiFetch('/upload-audio', {
@@ -2860,7 +2896,7 @@ export default function TeacherDashboard() {
                     </button>
                   </div>
                   
-                  <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6">
+                  <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6" style={{ WebkitOverflowScrolling: "touch" }}>
                     {messages.map((msg) => {
                       console.log('Renderizando mensagem:', msg);
                       const isMe = msg.sender_id === teacherId;
