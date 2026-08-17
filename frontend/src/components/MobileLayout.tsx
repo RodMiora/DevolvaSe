@@ -44,28 +44,12 @@ export default function MobileLayout({
   const [[page, direction], setPage] = useState([1, 0]);
   const activeTab = page;
 
-  const paginate = (newDirection: number) => {
-    const nextTab = activeTab + newDirection;
-    if (nextTab >= 0 && nextTab < TABS.length) {
-      setPage([nextTab, newDirection]);
-    }
-  };
-
   const goToTab = (tabId: string) => {
     const idx = TABS.findIndex(t => t.id === tabId);
     if (idx < 0) return;
     if (idx !== activeTab) {
       const newDirection = idx > activeTab ? 1 : -1;
       setPage([idx, newDirection]);
-    }
-  };
-
-  const handleDragEnd = (event: any, info: any) => {
-    const threshold = 50;
-    if (info.offset.x > threshold) {
-      paginate(-1);
-    } else if (info.offset.x < -threshold) {
-      paginate(1);
     }
   };
 
@@ -96,7 +80,7 @@ export default function MobileLayout({
             <NotificationBell userId={userId} variant="student" pollingIntervalMs={20000} />
           </div>
         </div>
-        
+
         {/* Tabs Navigation */}
         <div className="flex px-8 relative">
           {TABS.map((tab, idx) => (
@@ -117,12 +101,12 @@ export default function MobileLayout({
               )}
             </button>
           ))}
-          
+
           {/* Indicador de Gradiente VU - Fiel ao Mockup */}
           <div className="absolute bottom-0 left-8 right-8 h-[2px] bg-zinc-800">
-            <motion.div 
+            <motion.div
               className="h-full w-1/3"
-              style={{ 
+              style={{
                 background: "linear-gradient(to right, #22c55e, #eab308, #f97316, #ef4444)",
               }}
               animate={{ x: `${activeTab * 100}%` }}
@@ -132,8 +116,9 @@ export default function MobileLayout({
         </div>
       </header>
 
-      {/* Viewport de Conteúdo com Swipe - Usando AnimatePresence */}
-      <div className="h-[calc(100vh-80px)] w-full relative overflow-hidden bg-black">
+      {/* Viewport de Conteúdo - SEM swipe/drag horizontal (evita congelamento do scroll vertical no Safari iOS)
+          OBS: drag="x" do Framer Motion interceptava gestos diagonais e roubava a rolagem nativa. */}
+      <div className="flex-1 h-full w-full relative bg-black min-h-0 overflow-hidden">
         <AnimatePresence initial={false} custom={direction}>
           <motion.div
             key={page}
@@ -146,14 +131,14 @@ export default function MobileLayout({
               x: { type: "spring", stiffness: 300, damping: 30 },
               opacity: { duration: 0.2 }
             }}
-            drag="x"
-            dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={1}
-            onDragEnd={handleDragEnd}
-            className="absolute inset-0 w-full h-full"
+            className="w-full h-full relative"
+            style={{ touchAction: 'pan-y' as any }}
           >
             <TabNavigationProvider value={{ navigateToTab: (t: TabId) => goToTab(t) }}>
-              <div className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col" style={{ WebkitOverflowScrolling: "touch" }}>
+              <div
+                className="w-full h-full overflow-y-auto overflow-x-hidden flex flex-col"
+                style={{ WebkitOverflowScrolling: "touch" as any, touchAction: 'pan-y' as any }}
+              >
                 {getTabContent(activeTab)}
               </div>
             </TabNavigationProvider>

@@ -379,8 +379,8 @@ export default function LessonsScreen({
             setLessons(allLessons);
           }
 
-          allLessons.forEach(lesson => {
-            if (!lesson.thumbnail_url && lesson.video_url) {
+          allLessons.forEach((lesson, idx) => {
+            if (!lesson.thumbnail_url && lesson.video_url && idx < 2) {
               generateThumbnail(lesson.id, lesson.video_url);
             }
           });
@@ -399,6 +399,7 @@ export default function LessonsScreen({
     if (!studentId) return;
     let cancelled = false;
     const COOLDOWN_MS = 1200;
+    const didInitialMountRef = { current: false };
 
     const refetchLessons = async (fromRemote: boolean = false) => {
       if (cancelled) return;
@@ -409,7 +410,11 @@ export default function LessonsScreen({
       if (!user || cancelled) return;
 
       try {
-        setLoading(true);
+        // NAO setar loading=true apos o primeiro carregamento.
+        // Evita o "circulo de atualizando" aparecer sozinho no mobile.
+        if (!didInitialMountRef.current) {
+          setLoading(true);
+        }
 
         const { data: profileData } = await supabase
           .from('profiles')
@@ -496,7 +501,11 @@ export default function LessonsScreen({
       } catch (e) {
         console.warn('[LessonsScreen] refetch erro:', e);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          // Marca o primeiro carregamento como concluido (refetchs futuros nao piscam loading)
+          didInitialMountRef.current = true;
+          setLoading(false);
+        }
       }
     };
 
@@ -585,14 +594,24 @@ export default function LessonsScreen({
   };
 
   return (
-    <div className="flex flex-col h-full bg-black relative w-full overflow-hidden">
+    <div
+      className="flex flex-col h-full bg-black relative w-full min-h-0"
+      style={{ touchAction: 'pan-y' as any, WebkitOverflowScrolling: 'touch' as any }}
+    >
       {/* Video Modal */}
       {selectedLesson && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+        <div
+          className="fixed inset-0 z-[100] bg-black flex flex-col"
+          style={{ touchAction: 'manipulation' as any }}
+        >
           <div className="flex items-center justify-between px-4 py-3 bg-black/80">
             <h3 className="text-white font-bold truncate">{selectedLesson.title}</h3>
-            <button onClick={() => { setSelectedLesson(null); setViewingStudentVideo(false); if (videoRef.current) { try { videoRef.current.pause(); } catch (e) {} } }} className="p-2">
-              <X className="w-6 h-6 text-white" />
+            <button
+              onClick={() => { setSelectedLesson(null); setViewingStudentVideo(false); if (videoRef.current) { try { videoRef.current.pause(); } catch (e) {} } }}
+              className="p-3 shrink-0"
+              style={{ touchAction: 'manipulation' as any, minWidth: 44, minHeight: 44 }}
+            >
+              <X className="w-7 h-7 text-white" />
             </button>
           </div>
           {selectedLesson.has_exercise && (
@@ -831,7 +850,7 @@ export default function LessonsScreen({
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {(lessons || []).map((lesson) => {
+          {(lessons || []).map((lesson, index) => {
             const style = statusStyles[lesson.status];
             const isLocked = lesson.status === 'locked';
             return (
@@ -847,8 +866,9 @@ export default function LessonsScreen({
               >
                 {/* Thumbnail */}
                 <div className="relative aspect-video w-full bg-black overflow-hidden">
-                  {/* Video oculto com preload=metadata (segunda garantia p/ duracao real se canvas falhar) */}
-                  {lesson.video_url && (
+                  {/* Video oculto com preload=metadata - LIMITADO APENAS NA PRIMEIRA AULA para nao travar o compositor do Safari iOS.
+                    Para as demais aulas, usamos a duracao "--:--" no primeiro render — apos o usuario abrir o video ela e calculada. */}
+                  {lesson.video_url && index === 0 && (
                     <video
                       key={`meta-${lesson.id}`}
                       src={lesson.video_url}
