@@ -2760,6 +2760,592 @@ class LibraryCreateLessonRequest(BaseModel):
     title: str
     description: Optional[str] = None
 
+
+# =====================================================================
+# BIBLIOTECA MUSICAL - Models Pydantic (Nova funcionalidade, additiva)
+# =====================================================================
+
+class LibraryMusicCreateRequest(BaseModel):
+    title: str
+    artist: Optional[str] = None
+    composer: Optional[str] = None
+    year: Optional[int] = None
+    description: Optional[str] = None
+    main_style: Optional[str] = None
+    sub_style: Optional[str] = None
+    time_signature: Optional[str] = None
+    bpm: Optional[int] = None
+    original_key: Optional[str] = None
+    predominant_instrument_id: Optional[str] = None
+    level: Optional[str] = None
+    rhythm_complexity: Optional[str] = None
+    harmonic_complexity: Optional[str] = None
+    technical_complexity: Optional[str] = None
+    chord_count: Optional[int] = 0
+    chords_list: Optional[list[str]] = None
+    has_barre_chord: Optional[bool] = False
+    has_7th_chords: Optional[bool] = False
+    has_extended_chords: Optional[bool] = False
+    chords_text: Optional[str] = None
+    lyrics_chords: Optional[str] = None
+    listen_url: Optional[str] = None
+    applicable_instrument_ids: Optional[list[str]] = None
+    objective_ids: Optional[list[str]] = None
+    technique_ids: Optional[list[str]] = None
+
+
+class LibraryMusicUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    composer: Optional[str] = None
+    year: Optional[int] = None
+    description: Optional[str] = None
+    main_style: Optional[str] = None
+    sub_style: Optional[str] = None
+    time_signature: Optional[str] = None
+    bpm: Optional[int] = None
+    original_key: Optional[str] = None
+    predominant_instrument_id: Optional[str] = None
+    level: Optional[str] = None
+    rhythm_complexity: Optional[str] = None
+    harmonic_complexity: Optional[str] = None
+    technical_complexity: Optional[str] = None
+    chord_count: Optional[int] = None
+    chords_list: Optional[list[str]] = None
+    has_barre_chord: Optional[bool] = None
+    has_7th_chords: Optional[bool] = None
+    has_extended_chords: Optional[bool] = None
+    chords_text: Optional[str] = None
+    lyrics_chords: Optional[str] = None
+    listen_url: Optional[str] = None
+    applicable_instrument_ids: Optional[list[str]] = None
+    objective_ids: Optional[list[str]] = None
+    technique_ids: Optional[list[str]] = None
+
+
+class LibraryMusicToggleFavoriteRequest(BaseModel):
+    song_id: str
+    teacher_id: str
+    is_favorite: Optional[bool] = True
+
+
+def _lib_music_serialize_song(row: dict[str, Any], extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Serializa 1 song do PostgREST para JSON limpo (compatível se migration não aplicada)."""
+    if not row: return {}
+    base = {
+        "id": row.get("id"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "title": row.get("title"),
+        "artist": row.get("artist"),
+        "composer": row.get("composer"),
+        "year": row.get("year"),
+        "description": row.get("description"),
+        "main_style": row.get("main_style"),
+        "sub_style": row.get("sub_style"),
+        "time_signature": row.get("time_signature"),
+        "bpm": row.get("bpm"),
+        "original_key": row.get("original_key"),
+        "predominant_instrument_id": row.get("predominant_instrument_id"),
+        "predominant_instrument": None,
+        "level": row.get("level"),
+        "rhythm_complexity": row.get("rhythm_complexity"),
+        "harmonic_complexity": row.get("harmonic_complexity"),
+        "technical_complexity": row.get("technical_complexity"),
+        "chord_count": row.get("chord_count") or 0,
+        "chords_list": row.get("chords_list") or [],
+        "has_barre_chord": bool(row.get("has_barre_chord")),
+        "has_7th_chords": bool(row.get("has_7th_chords")),
+        "has_extended_chords": bool(row.get("has_extended_chords")),
+        "chords_text": row.get("chords_text"),
+        "lyrics_chords": row.get("lyrics_chords"),
+        "listen_url": row.get("listen_url"),
+        "applicable_instruments": [],
+        "objectives": [],
+        "techniques": [],
+        "is_favorite": bool(row.get("_is_favorite")),
+    }
+    if extra: base.update(extra)
+    return base
+
+
+# =====================================================================
+# BIBLIOTECA MUSICAL - Endpoints (/admin/music/*)
+# =====================================================================
+
+@app.get("/admin/music/catalogs")
+async def admin_music_get_catalogs():
+    """Retorna instrumentos, objetivos e técnicas cadastrados (filtros front-end).
+    Melhor desempenho: 1 única requisição para popular todo o header de filtros.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio as _aio
+    try:
+        def _sync():
+            instruments: list[dict] = []
+            objectives: list[dict] = []
+            techniques: list[dict] = []
+            styles: list[str] = []
+
+            # Instrumentos (usa tabela instruments existente)
+            try:
+                def _s_inst(c: Client):
+                    return c.table('instruments').select('id, name').order('name').execute()
+                r = execute_supabase_with_retry(_s_inst, operation_label="music-cat:instr")
+                instruments = list(r.data or [])
+            except Exception as _e:
+                if not _is_table_or_relation_missing_error(_e, "instruments"): raise
+
+            # Objetivos pedagógicos
+            try:
+                def _s_obj(c: Client):
+                    return c.table('music_pedagogical_objectives').select('id, name, slug').order('name').execute()
+                r = execute_supabase_with_retry(_s_obj, operation_label="music-cat:objectives")
+                objectives = list(r.data or [])
+            except Exception as _e:
+                if not _is_table_or_relation_missing_error(_e, "music_pedagogical_objectives"): raise
+
+            # Técnicas
+            try:
+                def _s_t(c: Client):
+                    return c.table('music_techniques').select('id, name, slug, category').order('category').order('name').execute()
+                r = execute_supabase_with_retry(_s_t, operation_label="music-cat:techniques")
+                techniques = list(r.data or [])
+            except Exception as _e:
+                if not _is_table_or_relation_missing_error(_e, "music_techniques"): raise
+
+            # Estilos (distintos a partir da coluna main_style)
+            try:
+                def _s_styles(c: Client):
+                    return c.table('music_songs').select('main_style').neq('main_style', '').not_.is_('main_style', 'null').execute()
+                r = execute_supabase_with_retry(_s_styles, operation_label="music-cat:styles")
+                seen: set[str] = set()
+                for row in (r.data or []):
+                    v = str(row.get('main_style') or '').strip()
+                    if v and v not in seen:
+                        seen.add(v); styles.append(v)
+                styles.sort()
+            except Exception as _e:
+                if not _is_table_or_relation_missing_error(_e, "music_songs"): raise
+
+            return {"instruments": instruments, "objectives": objectives, "techniques": techniques, "styles": styles}
+
+        loop = _aio.get_running_loop()
+        data = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, **data}
+    except HTTPException: raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": True, "note": "music_tables_not_yet_created", "instruments": [], "objectives": [], "techniques": [], "styles": []}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/music/songs")
+async def admin_music_list_songs(
+    search: Optional[str] = None,
+    instrument_id: Optional[str] = None,
+    predominant_instrument_id: Optional[str] = None,
+    level: Optional[str] = None,
+    main_style: Optional[str] = None,
+    time_signature: Optional[str] = None,
+    objective_id: Optional[str] = None,
+    technique_id: Optional[str] = None,
+    max_chords: Optional[int] = None,
+    bpm_min: Optional[int] = None,
+    bpm_max: Optional[int] = None,
+    rhythm_complexity: Optional[str] = None,
+    harmonic_complexity: Optional[str] = None,
+    technical_complexity: Optional[str] = None,
+    only_favorites: Optional[bool] = False,
+    teacher_id: Optional[str] = None,
+):
+    """Lista músicas com TODOS os filtros combináveis.
+    - Usa INNER JOINs em tabelas de ligação quando um filtro de N:N é passado.
+    - Suporta busca parcial por title/artist.
+    - Filtro de is_favorite depende de teacher_id.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio as _aio
+    try:
+        def _sync():
+            songs_raw: list[dict] = []
+
+            # Query base
+            def _sel(c: Client):
+                q = c.table('music_songs').select('*')
+
+                if search and search.strip():
+                    s = f"%{search.strip()}%"
+                    q = q.or_(f"title.ilike.{s},artist.ilike.{s},composer.ilike.{s}")
+                if level: q = q.eq('level', level)
+                if main_style: q = q.eq('main_style', main_style)
+                if time_signature: q = q.eq('time_signature', time_signature)
+                if predominant_instrument_id: q = q.eq('predominant_instrument_id', predominant_instrument_id)
+                if max_chords is not None: q = q.lte('chord_count', max_chords)
+                if bpm_min is not None: q = q.gte('bpm', bpm_min)
+                if bpm_max is not None: q = q.lte('bpm', bpm_max)
+                if rhythm_complexity: q = q.eq('rhythm_complexity', rhythm_complexity)
+                if harmonic_complexity: q = q.eq('harmonic_complexity', harmonic_complexity)
+                if technical_complexity: q = q.eq('technical_complexity', technical_complexity)
+
+                # Filtros N:N (instrumentos aplicáveis, objetivos, técnicas)
+                ids_song_filtered: Optional[set[str]] = None
+                if instrument_id:
+                    try:
+                        r_join = c.table('music_song_applicable_instruments').select('song_id').eq('instrument_id', instrument_id).execute()
+                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
+
+                if objective_id:
+                    try:
+                        r_join = c.table('music_song_objectives').select('song_id').eq('objective_id', objective_id).execute()
+                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
+
+                if technique_id:
+                    try:
+                        r_join = c.table('music_song_techniques').select('song_id').eq('technique_id', technique_id).execute()
+                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
+
+                # Favoritos
+                fav_ids: Optional[set[str]] = None
+                if only_favorites and teacher_id:
+                    try:
+                        r_fav = c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).execute()
+                        fav_ids = {str(r['song_id']) for r in (r_fav.data or [])}
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
+
+                q = q.order('updated_at', desc=True).limit(500)
+                result = q.execute()
+                rows = list(result.data or [])
+
+                if ids_song_filtered is not None:
+                    rows = [r for r in rows if str(r.get('id')) in ids_song_filtered]
+                if fav_ids is not None:
+                    rows = [r for r in rows if str(r.get('id')) in fav_ids]
+
+                return rows
+
+            songs_raw = execute_supabase_with_retry(_sel, operation_label="music:list") or []
+
+            # Hidrata: instrumentos, objetivos, técnicas
+            song_ids = {str(r["id"]) for r in songs_raw if r.get("id")}
+            instrument_map: dict[str, dict] = {}
+            song_insts: dict[str, list[dict]] = {}
+            song_objs: dict[str, list[dict]] = {}
+            song_tecs: dict[str, list[dict]] = {}
+            song_fav_set: set[str] = set()
+
+            try:
+                # Predominant instrument cache
+                pred_ids = {str(r["predominant_instrument_id"]) for r in songs_raw if r.get("predominant_instrument_id")}
+                if pred_ids:
+                    def _sel2(c: Client):
+                        return c.table('instruments').select('id, name').in_('id', list(pred_ids)).execute()
+                    r = execute_supabase_with_retry(_sel2, operation_label="music:pred-insts")
+                    for row in (r.data or []): instrument_map[str(row["id"])] = dict(row)
+
+                if song_ids:
+                    # Applicable instruments
+                    try:
+                        def _s_i(c: Client):
+                            return c.table('music_song_applicable_instruments').select('song_id, instrument_id, instruments(id, name)').in_('song_id', list(song_ids)).execute()
+                        r = execute_supabase_with_retry(_s_i, operation_label="music:app-insts")
+                        for row in (r.data or []):
+                            i = row.get("instruments") or {"id": row.get("instrument_id")}
+                            song_insts.setdefault(str(row["song_id"]), []).append(dict(i))
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
+
+                    # Objectives
+                    try:
+                        def _s_o(c: Client):
+                            return c.table('music_song_objectives').select('song_id, objective_id, music_pedagogical_objectives(id, name, slug)').in_('song_id', list(song_ids)).execute()
+                        r = execute_supabase_with_retry(_s_o, operation_label="music:objs")
+                        for row in (r.data or []):
+                            o = row.get("music_pedagogical_objectives") or {"id": row.get("objective_id")}
+                            song_objs.setdefault(str(row["song_id"]), []).append(dict(o))
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
+
+                    # Techniques
+                    try:
+                        def _s_t(c: Client):
+                            return c.table('music_song_techniques').select('song_id, technique_id, music_techniques(id, name, slug, category)').in_('song_id', list(song_ids)).execute()
+                        r = execute_supabase_with_retry(_s_t, operation_label="music:tecs")
+                        for row in (r.data or []):
+                            t = row.get("music_techniques") or {"id": row.get("technique_id")}
+                            song_tecs.setdefault(str(row["song_id"]), []).append(dict(t))
+                    except Exception:
+                        if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
+
+                    # Favoritos
+                    if teacher_id:
+                        try:
+                            def _s_f(c: Client):
+                                return c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).in_('song_id', list(song_ids)).execute()
+                            r = execute_supabase_with_retry(_s_f, operation_label="music:favs")
+                            song_fav_set = {str(row["song_id"]) for row in (r.data or [])}
+                        except Exception:
+                            if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
+            except Exception as _hydr_e:
+                print(f"[music] WARN hidrate: {type(_hydr_e).__name__}: {str(_hydr_e)[:180]}")
+
+            out = []
+            for r in songs_raw:
+                sid = str(r["id"])
+                s = _lib_music_serialize_song(r, {"_is_favorite": sid in song_fav_set})
+                pred_id = r.get("predominant_instrument_id")
+                s["predominant_instrument"] = instrument_map.get(str(pred_id)) if pred_id else None
+                s["applicable_instruments"] = song_insts.get(sid, [])
+                s["objectives"] = song_objs.get(sid, [])
+                s["techniques"] = song_tecs.get(sid, [])
+                out.append(s)
+            return out
+
+        loop = _aio.get_running_loop()
+        songs = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "count": len(songs), "songs": songs}
+    except HTTPException: raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": True, "note": "music_songs_not_yet_created", "count": 0, "songs": []}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/music/songs")
+async def admin_music_create_song(req: LibraryMusicCreateRequest):
+    """Cadastra 1 música nova + todos os relacionamentos."""
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio as _aio
+    try:
+        if not req.title.strip():
+            raise HTTPException(status_code=400, detail="title é obrigatório")
+        payload: dict[str, Any] = {
+            "title": req.title.strip(),
+            "artist": req.artist,
+            "composer": req.composer,
+            "year": req.year,
+            "description": req.description,
+            "main_style": req.main_style,
+            "sub_style": req.sub_style,
+            "time_signature": req.time_signature,
+            "bpm": req.bpm,
+            "original_key": req.original_key,
+            "predominant_instrument_id": req.predominant_instrument_id,
+            "level": req.level,
+            "rhythm_complexity": req.rhythm_complexity,
+            "harmonic_complexity": req.harmonic_complexity,
+            "technical_complexity": req.technical_complexity,
+            "chord_count": req.chord_count or 0,
+            "chords_list": req.chords_list or [],
+            "has_barre_chord": bool(req.has_barre_chord),
+            "has_7th_chords": bool(req.has_7th_chords),
+            "has_extended_chords": bool(req.has_extended_chords),
+            "chords_text": req.chords_text,
+            "lyrics_chords": req.lyrics_chords,
+            "listen_url": req.listen_url,
+        }
+        links = {
+            "instruments": list(dict.fromkeys(req.applicable_instrument_ids or [])) if req.applicable_instrument_ids else [],
+            "objectives": list(dict.fromkeys(req.objective_ids or [])) if req.objective_ids else [],
+            "techniques": list(dict.fromkeys(req.technique_ids or [])) if req.technique_ids else [],
+        }
+
+        def _sync():
+            def _ins(c: Client): return c.table('music_songs').insert(payload).select('*').execute()
+            r = execute_supabase_with_retry(_ins, operation_label="music:create")
+            if not (r.data and len(r.data)): raise HTTPException(status_code=500, detail="Falha ao inserir música")
+            song = dict(r.data[0])
+            song_id = str(song["id"])
+
+            def _link(table, col_song, col_other, ids):
+                if not ids: return
+                rows = [{col_song: song_id, col_other: i} for i in ids if i]
+                if not rows: return
+                try:
+                    def _do_insert(c: Client): return c.table(table).insert(rows, upsert=True).execute()
+                    execute_supabase_with_retry(_do_insert, operation_label=f"music:link-{table}")
+                except Exception as _e:
+                    if not _is_table_or_relation_missing_error(_e, table): raise
+
+            _link('music_song_applicable_instruments', 'song_id', 'instrument_id', links["instruments"])
+            _link('music_song_objectives', 'song_id', 'objective_id', links["objectives"])
+            _link('music_song_techniques', 'song_id', 'technique_id', links["techniques"])
+            return song
+
+        loop = _aio.get_running_loop()
+        song = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "song_id": song["id"], "song": song}
+    except HTTPException: raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": False, "note": "music_songs_missing_run_migration", "detail": "Execute a migration 20260817100000_biblioteca_musical.sql"}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/admin/music/songs/{song_id}")
+async def admin_music_update_song(song_id: str, req: LibraryMusicUpdateRequest):
+    """Atualiza música + upsert de relacionamentos (substitui todos por nova lista)."""
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio as _aio
+    try:
+        def _sync():
+            update: dict[str, Any] = {}
+            upd_fields = [
+                "title","artist","composer","year","description","main_style","sub_style","time_signature",
+                "bpm","original_key","predominant_instrument_id","level","rhythm_complexity",
+                "harmonic_complexity","technical_complexity","chord_count","chords_list",
+                "has_barre_chord","has_7th_chords","has_extended_chords","chords_text","lyrics_chords","listen_url"
+            ]
+            for f in upd_fields:
+                v = getattr(req, f, None)
+                if v is not None: update[f] = v
+            if update:
+                update["updated_at"] = 'now()'
+                try:
+                    def _u(c: Client): return c.table('music_songs').update(update).eq('id', song_id).execute()
+                    execute_supabase_with_retry(_u, operation_label="music:update")
+                except Exception as _e:
+                    if not _is_table_or_relation_missing_error(_e, "music_songs"): raise
+
+            # Replace de relacionamentos: delete current + insert novos
+            def _replace_links(table, col_song, col_other, new_ids):
+                if new_ids is None: return
+                try:
+                    def _del(c: Client): return c.table(table).delete().eq(col_song, song_id).execute()
+                    execute_supabase_with_retry(_del, operation_label=f"music:del-{table}")
+                    rows = [{col_song: song_id, col_other: i} for i in new_ids if i]
+                    if rows:
+                        def _ins(c: Client): return c.table(table).insert(rows, upsert=True).execute()
+                        execute_supabase_with_retry(_ins, operation_label=f"music:ins-{table}")
+                except Exception as _e:
+                    if not _is_table_or_relation_missing_error(_e, table): raise
+
+            _replace_links('music_song_applicable_instruments', 'song_id', 'instrument_id', req.applicable_instrument_ids)
+            _replace_links('music_song_objectives', 'song_id', 'objective_id', req.objective_ids)
+            _replace_links('music_song_techniques', 'song_id', 'technique_id', req.technique_ids)
+
+            # Retorna atualizado (com hidratação leve)
+            def _get(c: Client): return c.table('music_songs').select('*').eq('id', song_id).execute()
+            r = execute_supabase_with_retry(_get, operation_label="music:get-update")
+            return r.data[0] if (r.data and len(r.data)) else None
+
+        loop = _aio.get_running_loop()
+        song = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "song": song}
+    except HTTPException: raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/admin/music/songs/{song_id}")
+async def admin_music_delete_song(song_id: str):
+    """Deleta 1 música (CASCADE já apaga relacionamentos automaticamente)."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        def _sync():
+            def _d(c: Client): return c.table('music_songs').delete().eq('id', song_id).execute()
+            execute_supabase_with_retry(_d, operation_label="music:delete")
+            return True
+        loop = _aio.get_running_loop()
+        await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "deleted": True, "song_id": song_id}
+    except HTTPException: raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/music/songs/{song_id}/favorite")
+async def admin_music_toggle_favorite(song_id: str, req: LibraryMusicToggleFavoriteRequest):
+    """Marca/desmarca música como ⭐ favorita do professor.
+    Upsert se is_favorite=True, DELETE se False."""
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio as _aio
+    try:
+        teacher_id = req.teacher_id.strip() if req.teacher_id else ''
+        if not teacher_id: raise HTTPException(status_code=400, detail="teacher_id obrigatório")
+        is_fav = bool(req.is_favorite)
+
+        def _sync():
+            try:
+                if is_fav:
+                    def _i(c: Client):
+                        return c.table('music_song_favorites').upsert({
+                            "song_id": song_id, "teacher_id": teacher_id
+                        }).execute()
+                    execute_supabase_with_retry(_i, operation_label="music:fav-on")
+                else:
+                    def _d(c: Client):
+                        return c.table('music_song_favorites').delete().eq('song_id', song_id).eq('teacher_id', teacher_id).execute()
+                    execute_supabase_with_retry(_d, operation_label="music:fav-off")
+                return is_fav
+            except Exception as _e:
+                if _is_table_or_relation_missing_error(_e, "music_song_favorites"):
+                    return is_fav
+                raise
+
+        loop = _aio.get_running_loop()
+        final_val = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "is_favorite": final_val, "song_id": song_id}
+    except HTTPException: raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/music/objectives")
+async def admin_music_add_objective(name: str):
+    """Adiciona novo objetivo pedagógico customizado (expansível)."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        def _sync():
+            slug = name.strip().lower()[:60].replace(' ', '-').replace('/', '-').replace('á','a').replace('é','e').replace('í','i').replace('ó','o').replace('ú','u').replace('ã','a').replace('õ','o').replace('ç','c')
+            def _i(c: Client):
+                return c.table('music_pedagogical_objectives').upsert({"name": name.strip(), "slug": slug}).select('*').execute()
+            r = execute_supabase_with_retry(_i, operation_label="music:obj-new")
+            return (r.data or [])[0] if r.data else None
+        loop = _aio.get_running_loop()
+        obj = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "objective": obj}
+    except HTTPException: raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": False, "note": "music_pedagogical_objectives_missing"}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/music/techniques")
+async def admin_music_add_technique(name: str, category: str = "geral"):
+    """Adiciona nova técnica customizada (expansível)."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        def _sync():
+            slug = name.strip().lower()[:60].replace(' ', '-').replace('/', '-').replace('á','a').replace('é','e').replace('í','i').replace('ó','o').replace('ú','u').replace('ã','a').replace('õ','o').replace('ç','c')
+            def _i(c: Client):
+                return c.table('music_techniques').upsert({"name": name.strip(), "slug": slug, "category": category.strip() or "geral"}).select('*').execute()
+            r = execute_supabase_with_retry(_i, operation_label="music:tec-new")
+            return (r.data or [])[0] if r.data else None
+        loop = _aio.get_running_loop()
+        tec = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "technique": tec}
+    except HTTPException: raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": False, "note": "music_techniques_missing"}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/admin/library/create-lesson")
 async def admin_library_create_lesson(req: LibraryCreateLessonRequest):
     """Cria aula sem vídeo (apenas entrada na tabela lessons).
@@ -2819,6 +3405,159 @@ async def admin_library_create_lesson(req: LibraryCreateLessonRequest):
         raise
     except Exception as e:
         print(f"[library] ERRO create lesson: {type(e).__name__}: {str(e)[:200]}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================
+# PERFIL MUSICAL DO ALUNO (Models Pydantic + 2 endpoints)
+# Arquitetura: 1 tabela 1:1 student_music_profiles, JSONB flexivel.
+# Fallback se migration nao foi aplicada: retorna defaults vazios sem crash.
+# =====================================================================
+class StudentMusicProfileUpsertRequest(BaseModel):
+    main_instrument: Optional[str] = None
+    other_instruments: Optional[list[str]] = None
+    level: Optional[str] = None
+    experience_text: Optional[str] = None
+    styles: Optional[list[str]] = None
+    objectives: Optional[list[str]] = None
+    main_objective: Optional[str] = None
+    difficulties: Optional[list[str]] = None
+    observations: Optional[str] = None
+    skills: Optional[dict[str, dict[str, str]]] = None
+    preferences: Optional[dict[str, Any]] = None
+    repertory: Optional[dict[str, list[Any]]] = None
+
+
+_STUDENT_MUSIC_PROFILE_DEFAULTS: dict[str, Any] = {
+    "main_instrument": None,
+    "other_instruments": [],
+    "level": None,
+    "experience_text": None,
+    "styles": [],
+    "objectives": [],
+    "main_objective": None,
+    "difficulties": [],
+    "observations": None,
+    "skills": {},
+    "preferences": {
+        "favorite_artists": [],
+        "favorite_songs": [],
+        "favorite_styles": [],
+        "want_to_learn": [],
+    },
+    "repertory": {
+        "learning": [],
+        "mastered": [],
+        "planned": [],
+    },
+}
+
+
+@app.get("/admin/students/{student_id}/music-profile")
+async def admin_student_get_music_profile(student_id: str):
+    """Retorna o Perfil Musical do aluno, ou defaults vazios se ainda nao existir."""
+    try:
+        res = execute_supabase_with_retry(
+            lambda sb: sb.table("student_music_profiles")
+            .select("*")
+            .eq("student_id", student_id)
+            .limit(1)
+            .execute()
+        )
+        if res and getattr(res, "data", None) and len(res.data) > 0:
+            row = res.data[0]
+            merged: dict[str, Any] = {**_STUDENT_MUSIC_PROFILE_DEFAULTS}
+            for k, v in row.items():
+                if k in ("id", "student_id", "created_at", "updated_at"):
+                    continue
+                if isinstance(_STUDENT_MUSIC_PROFILE_DEFAULTS.get(k), dict) and isinstance(v, dict):
+                    merged[k] = {**_STUDENT_MUSIC_PROFILE_DEFAULTS[k], **v}
+                elif isinstance(_STUDENT_MUSIC_PROFILE_DEFAULTS.get(k), list) and isinstance(v, list):
+                    merged[k] = v if v else _STUDENT_MUSIC_PROFILE_DEFAULTS[k]
+                else:
+                    merged[k] = v if v is not None else _STUDENT_MUSIC_PROFILE_DEFAULTS.get(k)
+            return {"success": True, "profile": merged, "exists": True}
+        return {"success": True, "profile": _STUDENT_MUSIC_PROFILE_DEFAULTS, "exists": False,
+                "note": "Perfil ainda nao criado, retornando defaults."}
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e, "student_music_profiles"):
+            return {"success": True, "profile": _STUDENT_MUSIC_PROFILE_DEFAULTS, "exists": False,
+                    "note": "student_music_profiles_missing_apply_migration"}
+        print(f"[music-profile] ERRO get {student_id}: {type(e).__name__}: {str(e)[:300]}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/admin/students/{student_id}/music-profile")
+async def admin_student_patch_music_profile(student_id: str, payload: StudentMusicProfileUpsertRequest):
+    """Upsert do Perfil Musical: atualiza apenas os campos enviados. JSONB recebem merge shallow."""
+    try:
+        fields: dict[str, Any] = {}
+        if payload.main_instrument is not None:
+            fields["main_instrument"] = payload.main_instrument or None
+        if payload.other_instruments is not None:
+            fields["other_instruments"] = list(payload.other_instruments or [])
+        if payload.level is not None:
+            allowed_levels = {"iniciante", "basico", "intermediario", "intermediario_avancado", "avancado"}
+            if payload.level not in allowed_levels:
+                raise HTTPException(status_code=400, detail=f"level invalido: {payload.level}")
+            fields["level"] = payload.level
+        if payload.experience_text is not None:
+            fields["experience_text"] = payload.experience_text or None
+        if payload.styles is not None:
+            fields["styles"] = list(payload.styles or [])
+        if payload.objectives is not None:
+            fields["objectives"] = list(payload.objectives or [])
+        if payload.main_objective is not None:
+            fields["main_objective"] = payload.main_objective or None
+        if payload.difficulties is not None:
+            fields["difficulties"] = list(payload.difficulties or [])
+        if payload.observations is not None:
+            fields["observations"] = payload.observations or None
+        if payload.skills is not None:
+            fields["skills"] = payload.skills or {}
+        if payload.preferences is not None:
+            fields["preferences"] = payload.preferences or {}
+        if payload.repertory is not None:
+            fields["repertory"] = payload.repertory or {}
+        if not fields:
+            return {"success": True, "note": "nenhum_campo_enviado"}
+
+        def _sync_do_upsert():
+            sb = _get_supabase_client()
+            existing = sb.table("student_music_profiles").select("id").eq("student_id", student_id).limit(1).execute()
+            if existing.data and len(existing.data) > 0:
+                row_id = existing.data[0]["id"]
+                merged_fields = dict(fields)
+                # Merge shallow de JSONB: campo atual (BD) UNION novo payload (payload ganha no conflito).
+                cur = sb.table("student_music_profiles").select("skills,preferences,repertory,other_instruments,styles,objectives,difficulties").eq("id", row_id).limit(1).execute()
+                if cur.data and len(cur.data) > 0:
+                    c = cur.data[0]
+                    for k in ("skills","preferences","repertory"):
+                        if k in merged_fields and isinstance(c.get(k), dict) and isinstance(merged_fields[k], dict):
+                            merged_fields[k] = {**(c[k] or {}), **(merged_fields[k] or {})}
+                res_upd = sb.table("student_music_profiles").update(merged_fields).eq("id", row_id).execute()
+                return res_upd.data[0] if res_upd.data else None
+            else:
+                ins = {**{"student_id": student_id}, **fields}
+                # Garante que os JSONB defaults existam mesmo que nao enviados.
+                ins.setdefault("other_instruments", [])
+                ins.setdefault("styles", [])
+                ins.setdefault("objectives", [])
+                ins.setdefault("difficulties", [])
+                ins.setdefault("skills", {})
+                ins.setdefault("preferences", {"favorite_artists":[],"favorite_songs":[],"favorite_styles":[],"want_to_learn":[]})
+                ins.setdefault("repertory", {"learning":[],"mastered":[],"planned":[]})
+                res_ins = sb.table("student_music_profiles").insert(ins).execute()
+                return res_ins.data[0] if res_ins.data else None
+
+        row = await asyncio.get_event_loop().run_in_executor(ThreadPoolExecutor(max_workers=1), _sync_do_upsert)
+        return {"success": True, "profile": row, "upserted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e, "student_music_profiles"):
+            raise HTTPException(status_code=503, detail="tabela_student_music_profiles_nao_existe_aplique_migration")
+        print(f"[music-profile] ERRO upsert {student_id}: {type(e).__name__}: {str(e)[:300]}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -39,11 +39,14 @@ import {
   CalendarDays,
   BookA,
   Layers3,
+  Music4,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL, apiFetch, apiAlert, getApiBearerToken } from "@/lib/api";
 import NotificationBell from "./NotificationBell";
 import BibliotecaAulas from "./BibliotecaAulas";
+import BibliotecaMusical from "./BibliotecaMusical";
+import StudentMusicProfile from "./StudentMusicProfile";
 import {
   resolveLessonStatus,
   subscribeStudentLessons,
@@ -115,10 +118,10 @@ interface CourseVideo {
 }
 
 export default function TeacherDashboard() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'cursos' | 'alunos' | 'config' | 'biblioteca'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'biblioteca' | 'biblioteca_musical' | 'cursos' | 'alunos' | 'config'>('dashboard');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [viewMode, setViewMode] = useState<'chat' | 'lessons'>('chat');
+  const [viewMode, setViewMode] = useState<'chat' | 'perfil_musical' | 'lessons'>('chat');
   const [students, setStudents] = useState<Student[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [courseVideos, setCourseVideos] = useState<CourseVideo[]>([]);
@@ -1933,6 +1936,7 @@ export default function TeacherDashboard() {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
             { id: 'biblioteca', label: 'Biblioteca', icon: Layers3 },
+            { id: 'biblioteca_musical', label: 'Biblioteca Musical', icon: Music4 },
             { id: 'cursos', label: 'Meus Cursos', icon: BookOpen },
             { id: 'alunos', label: 'Alunos', icon: Users },
             { id: 'config', label: 'Configurações', icon: Settings },
@@ -1989,7 +1993,7 @@ export default function TeacherDashboard() {
       {/* COLUNA 2 - Seletor Central */}
       <section className={cn(
         "w-full md:w-80 border-r border-white/5 flex flex-col bg-[#0d0d0d]/50",
-        activeTab === 'biblioteca'
+        activeTab === 'biblioteca' || activeTab === 'biblioteca_musical'
           ? "hidden"
           : (isMobileDetailsView || activeTab === 'dashboard' || activeTab === 'config') ? "hidden md:flex" : "flex"
       )}>
@@ -2204,7 +2208,7 @@ export default function TeacherDashboard() {
       {/* COLUNA 3 - Área de Ação */}
       <main className={cn(
         "flex-1 flex flex-col bg-black relative",
-        (activeTab === 'dashboard' || activeTab === 'config' || activeTab === 'biblioteca') ? "flex" : 
+        (activeTab === 'dashboard' || activeTab === 'config' || activeTab === 'biblioteca' || activeTab === 'biblioteca_musical') ? "flex" : 
         (isMobileDetailsView ? "flex" : "hidden md:flex")
       )}>
         {activeTab === 'dashboard' ? (
@@ -2852,6 +2856,32 @@ export default function TeacherDashboard() {
               <BibliotecaAulas />
             </div>
           </div>
+        ) : activeTab === 'biblioteca_musical' ? (
+          <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+            {/* Header hamburguer FORA do scroll (sticky com zIndex alto) */}
+            <div className="px-4 py-3 border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur-md sticky top-0 z-30 md:hidden flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="p-2.5 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                  aria-label="Abrir menu"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <Music4 className="w-5 h-5 text-[#a855f7]" />
+                  <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-[#f97316] to-[#ef4444] bg-clip-text text-transparent">Biblioteca Musical</span>
+                </div>
+              </div>
+            </div>
+            {/* Area scrollavel real. Aqui DENTRO vai a biblioteca musical com seu proprio scroll interno. */}
+            <div
+              className="flex-1 min-h-0 w-full overflow-y-auto pb-6"
+              style={{ WebkitOverflowScrolling: 'touch' as any }}
+            >
+              <BibliotecaMusical teacherId={teacherId || teacherProfile?.id || null} />
+            </div>
+          </div>
         ) : selectedStudent ? (
           <>
             {/* Header Global */}
@@ -2888,6 +2918,15 @@ export default function TeacherDashboard() {
                     )}
                   >
                     Chat
+                  </button>
+                  <button 
+                    onClick={() => setViewMode('perfil_musical')}
+                    className={cn(
+                      "px-3 md:px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                      viewMode === 'perfil_musical' ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-white"
+                    )}
+                  >
+                    Perfil Musical
                   </button>
                   <button 
                     onClick={() => setViewMode('lessons')}
@@ -3073,6 +3112,14 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Perfil Musical View */}
+              {viewMode === 'perfil_musical' && selectedStudent && (
+                <StudentMusicProfile
+                  studentId={selectedStudent.id}
+                  studentName={selectedStudent.full_name}
+                />
               )}
 
               {/* Lessons Management View */}
