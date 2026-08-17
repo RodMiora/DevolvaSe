@@ -202,17 +202,17 @@ export default function Home() {
   ];
 
   return (
-    <main className="h-full">
+    <main className="h-full w-full min-h-0">
       <MobileLayout
         hasChatNotification={true}
         onLogout={() => supabase.auth.signOut()}
         userId={mockUser.id}
         chat={teacherId ? <ChatScreen userId={mockUser.id} receiverId={teacherId} /> : null}
         aulas={
-          <div className="relative h-full">
-            <LessonsScreen 
-              studentName={mockUser.name} 
-              instrument={mockUser.instrument} 
+          <div className="relative flex-1 min-h-0 h-full w-full overflow-hidden">
+            <LessonsScreen
+              studentName={mockUser.name}
+              instrument={mockUser.instrument}
             />
           </div>
         }

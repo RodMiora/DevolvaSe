@@ -756,7 +756,10 @@ export default function LessonsScreen({
       )}
 
       {/* Scrollable Content - Cards com miniaturas individuais e bordas coloridas por status */}
-      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-32 w-full">
+      <div
+        className="flex-1 overflow-y-auto px-4 pt-4 pb-32 w-full min-h-0"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[1.5rem] font-bold text-white">Vídeos</h2>
           <button

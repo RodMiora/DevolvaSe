@@ -2823,7 +2823,31 @@ export default function TeacherDashboard() {
             </div>
           )
         ) : activeTab === 'biblioteca' ? (
-          <BibliotecaAulas />
+          <div
+            className="flex-1 overflow-y-auto min-h-0 w-full"
+            style={{ WebkitOverflowScrolling: 'touch' as any }}
+          >
+            <div className="px-4 py-4 border-b border-white/5 bg-[#0d0d0d]/30 backdrop-blur-md sticky top-0 z-20 md:hidden">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors shrink-0"
+                  aria-label="Abrir menu"
+                >
+                  <Menu className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-end gap-[2px] h-5">
+                    {[0.4, 0.7, 1, 0.6, 0.8].map((h, i) => (
+                      <div key={i} className="w-[3px] bg-gradient-to-t from-[#22c55e] via-[#f97316] to-[#ef4444] rounded-full" style={{ height: `${h * 100}%` }} />
+                    ))}
+                  </div>
+                  <span className="text-lg font-bold tracking-tight text-white">Biblioteca</span>
+                </div>
+              </div>
+            </div>
+            <BibliotecaAulas />
+          </div>
         ) : selectedStudent ? (
           <>
             {/* Header Global */}

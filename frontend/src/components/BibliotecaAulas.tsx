@@ -225,9 +225,12 @@ export default function BibliotecaAulas() {
   }, [selectedType, selectedModuleId, selectedLessonId]);
 
   return (
-    <div className="flex-1 flex flex-col bg-[#050505] overflow-hidden">
+    <div
+      className="flex-1 min-h-0 flex flex-col bg-[#050505] w-full"
+      style={{ WebkitOverflowScrolling: 'touch' as any }}
+    >
       {/* ====== HEADER DA BIBLIOTECA ====== */}
-      <header className="border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur px-4 md:px-8 py-4 md:py-5 space-y-4">
+      <header className="border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur px-3 md:px-8 py-3 md:py-5 space-y-3 md:space-y-4">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#22c55e]/30 via-[#f97316]/30 to-[#eab308]/30 flex items-center justify-center text-2xl border border-white/5">
