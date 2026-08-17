@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Plus,
+  PlusCircle,
   FileText,
   Music,
   Trash2,
@@ -278,7 +279,10 @@ export default function BibliotecaAulas() {
                   else setSelectedInstId(inst.id);
                 }}
                 className={cn(
-                  "group relative p-3 md:p-4 rounded-2xl border transition-all text-left",
+                  "group relative transition-all text-left rounded-xl md:rounded-2xl border",
+                  // Mobile: padding compacto (3 linhas: emoji + nome + contadores), cabem 2 linhas de 3 cards em ~35% da tela
+                  // Desktop: padding normal
+                  "p-2 md:p-4",
                   isActive
                     ? "border-[#22c55e]/50 bg-gradient-to-br from-[#22c55e]/15 via-[#f97316]/10 to-transparent shadow-[0_0_30px_rgba(34,197,94,0.13)]"
                     : missing
@@ -286,8 +290,8 @@ export default function BibliotecaAulas() {
                       : "border-white/5 bg-[#0d0d0d] hover:border-white/10 hover:bg-zinc-900/80"
                 )}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="text-2xl md:text-3xl leading-none">{inst.emoji || "🎵"}</div>
+                <div className="flex items-start justify-between gap-1 md:gap-2">
+                  <div className="text-xl md:text-3xl leading-none">{inst.emoji || "🎵"}</div>
                   {missing && (
                     <div className="px-1.5 py-0.5 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-[9px] font-bold uppercase text-yellow-400 tracking-wide">
                       Não criado
@@ -297,9 +301,9 @@ export default function BibliotecaAulas() {
                     <CircleDot className="w-3.5 h-3.5 text-[#22c55e]" />
                   )}
                 </div>
-                <div className="mt-2">
-                  <div className="text-sm md:text-[15px] font-bold text-white truncate">{inst.name}</div>
-                  <div className="mt-1 flex items-center gap-2 text-[10.5px] md:text-[11px] text-zinc-500">
+                <div className="mt-1 md:mt-2">
+                  <div className="text-[13px] md:text-[15px] font-bold text-white truncate leading-tight">{inst.name}</div>
+                  <div className="mt-0.5 md:mt-1 flex items-center gap-1 md:gap-2 text-[9.5px] md:text-[11px] text-zinc-500 leading-tight">
                     <BookA className="w-3 h-3 opacity-70" />
                     <span>{inst.modules_count || 0} módulos</span>
                     <span className="opacity-50">·</span>
@@ -316,10 +320,23 @@ export default function BibliotecaAulas() {
       {!activeInstrument && !loadingTree ? (
         <EmptyState instrumentsReady={instruments.some((i) => !!i.id && !i.missing)} onBootstrap={runBootstrap} />
       ) : (
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.55fr)] gap-0 border-t border-white/5">
+        <div
+          className={cn(
+            "flex-1 min-h-0 grid gap-0 border-t border-white/5 w-full",
+            // DESKTOP: sempre 2 colunas
+            // MOBILE: 2 colunas APENAS se houver selecao no editor (Module/LessonEditor).
+            //         se nada selecionado = 1 coluna (toda largura para arvore)
+            !selectedType ? "grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.55fr)]" : "grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.55fr)]"
+          )}
+        >
           {/* ====== COLUNA ESQUERDA: ÁRVORE MÓDULOS / AULAS ====== */}
-          <aside className="border-r border-white/5 bg-[#0a0a0a] min-h-0 flex flex-col overflow-hidden">
-            <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-2 bg-[#0d0d0d]/40">
+          <aside className={cn(
+            "border-r border-white/5 bg-[#0a0a0a] min-h-0 flex flex-col w-full",
+            // overflow-hidden APENAS no desktop. No mobile, a arvore tem largura inteira = deixa o container pai scrollar.
+            "lg:overflow-hidden"
+          )}>
+            {/* Header STICKY no topo do aside: botao + Modulo NUNCA desaparece */}
+            <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between gap-2 bg-[#0d0d0d]/70 backdrop-blur-sm sticky top-0 z-10">
               <div>
                 <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Trilha</div>
                 <div className="text-sm font-semibold text-white truncate">
@@ -332,19 +349,30 @@ export default function BibliotecaAulas() {
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 pb-24 space-y-2" style={{ WebkitOverflowScrolling: 'touch' as any }}>
+            <div
+              className={cn(
+                "flex-1 w-full",
+                // Desktop: scroll interno do aside
+                "lg:overflow-y-auto lg:p-3",
+                // Mobile: padding interno e rola com o resto do documento (nao tem scroll interno aninhado)
+                "p-3 pb-16"
+              )}
+              style={{ WebkitOverflowScrolling: 'touch' as any }}
+            >
               {loadingTree && (
                 <div className="flex items-center gap-2 px-2 py-3 text-xs text-zinc-500">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Carregando trilha…
                 </div>
               )}
               {!loadingTree && modules.length === 0 && (
-                <div className="mt-8 text-center px-3 pb-12">
-                  <div className="text-3xl mb-2">📁</div>
-                  <div className="text-sm font-semibold text-white">Sem módulos ainda</div>
-                  <p className="mt-1 text-[11.5px] text-zinc-500">
-                    Clique em <span className="text-[#22c55e] font-bold">+ Módulo</span> para começar a criar a trilha de{" "}
-                    <span className="text-white font-semibold">{activeInstrument?.name}</span>.
+                <div className="mt-4 text-center px-3 py-10 rounded-xl border border-dashed border-white/10 bg-[#0d0d0d]/50">
+                  <div className="text-4xl mb-3">📁</div>
+                  <div className="text-base md:text-sm font-semibold text-white">Sem módulos ainda</div>
+                  <p className="mt-2 text-sm md:text-[12px] text-zinc-400 leading-relaxed max-w-xs mx-auto">
+                    Toque no botão <span className="text-[#22c55e] font-bold inline-flex items-center gap-1">
+                      <PlusCircle className="w-3.5 h-3.5" /> Módulo
+                    </span>{" "}
+                    ali em cima 👆 para começar a criar a trilha de <span className="text-white font-semibold">{activeInstrument?.name}</span>.
                   </p>
                 </div>
               )}
@@ -455,7 +483,17 @@ export default function BibliotecaAulas() {
           </aside>
 
           {/* ====== COLUNA DIREITA: DETALHE ====== */}
-          <section ref={editorColRef as any} className="bg-[#050505] min-h-0 overflow-y-auto px-3 py-3 md:px-6 md:py-5 pb-24" style={{ WebkitOverflowScrolling: 'touch' as any }}>
+          {/* Mobile (abaixo de lg): renderiza APENAS se houver algo para editar. */}
+          {(!selectedType ? false : true) || (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(min-width: 1024px)').matches) ? (
+            <section
+              ref={editorColRef as any}
+              className={cn(
+                "bg-[#050505] w-full",
+                // Mobile: empilhado = min-h-auto + pb-24 para o final do formulario nao ser cortado
+                !selectedType ? "hidden lg:flex lg:flex-col lg:min-h-0 lg:overflow-y-auto lg:px-6 lg:py-5 lg:pb-24" : "flex flex-col min-h-0 overflow-y-auto px-3 py-3 md:px-6 md:py-5 pb-32"
+              )}
+              style={{ WebkitOverflowScrolling: 'touch' as any }}
+            >
             {selectedType === "module" && selectedModuleId && (
               <ModuleEditor
                 key={"m" + selectedModuleId}
@@ -482,7 +520,8 @@ export default function BibliotecaAulas() {
             {!selectedType && (
               <NothingSelectedHint instrument={activeInstrument?.name || ""} modulesCount={modules.length} />
             )}
-          </section>
+            </section>
+          ) : null}
         </div>
       )}
     </div>

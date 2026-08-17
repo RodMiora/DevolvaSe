@@ -2823,15 +2823,13 @@ export default function TeacherDashboard() {
             </div>
           )
         ) : activeTab === 'biblioteca' ? (
-          <div
-            className="flex-1 overflow-y-auto min-h-0 w-full"
-            style={{ WebkitOverflowScrolling: 'touch' as any }}
-          >
-            <div className="px-4 py-4 border-b border-white/5 bg-[#0d0d0d]/30 backdrop-blur-md sticky top-0 z-20 md:hidden">
+          <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+            {/* Header hamburguer FORA do scroll (sticky com zIndex alto) */}
+            <div className="px-4 py-3 border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur-md sticky top-0 z-30 md:hidden flex-shrink-0">
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setIsMobileMenuOpen(true)}
-                  className="p-2 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors shrink-0"
+                  className="p-2.5 bg-zinc-800 rounded-full text-white hover:bg-zinc-700 transition-colors shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
                   aria-label="Abrir menu"
                 >
                   <Menu className="w-5 h-5" />
@@ -2846,7 +2844,13 @@ export default function TeacherDashboard() {
                 </div>
               </div>
             </div>
-            <BibliotecaAulas />
+            {/* Area scrollavel real. Aqui DENTRO vai a biblioteca com seu proprio scroll interno. */}
+            <div
+              className="flex-1 min-h-0 w-full overflow-y-auto pb-6"
+              style={{ WebkitOverflowScrolling: 'touch' as any }}
+            >
+              <BibliotecaAulas />
+            </div>
           </div>
         ) : selectedStudent ? (
           <>
