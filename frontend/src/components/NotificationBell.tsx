@@ -146,6 +146,8 @@ export default function NotificationBell({
     function onClickOutside(e: MouseEvent) {
       if (!openRef.current) return;
       if (!containerRef.current) return;
+      // No mobile, o overlay já fecha o painel. Não precisamos checar fora.
+      if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return;
       if (!containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
@@ -218,12 +220,13 @@ export default function NotificationBell({
       </button>
 
       {open && (
-        <div
-          className={cn(
-            "absolute top-[calc(100%+10px)] z-[200] w-[min(92vw,380px)] rounded-2xl border border-white/10 bg-[#0d0d0d] shadow-[0_22px_60px_rgba(0,0,0,0.72)] overflow-hidden",
-            variant === "student" ? "right-0" : "right-0"
-          )}
-        >
+        <>
+          {/* Overlay mobile para click-outside sem estourar viewport */}
+          <div
+            className="fixed inset-0 z-[199] md:hidden bg-black/40 backdrop-blur-[2px]"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
           <style>{`
             @keyframes bellwig {
               0%,100% { transform: rotate(0deg); }
@@ -234,6 +237,14 @@ export default function NotificationBell({
               75% { transform: rotate(-3deg); }
             }
           `}</style>
+          <div
+            className={cn(
+              // MOBILE: fixed, centralizado, nunca sai da viewport
+              // DESKTOP: absolute, ancorado no sino (padrão)
+              "z-[200] rounded-2xl border border-white/10 bg-[#0d0d0d] shadow-[0_22px_60px_rgba(0,0,0,0.72)] overflow-hidden",
+              "fixed md:absolute inset-x-2 md:inset-x-auto md:top-[calc(100%+10px)] top-16 md:right-0 mx-auto w-[calc(100vw-16px)] md:w-[min(92vw,380px)] max-w-[420px]"
+            )}
+          >
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
             <div>
               <div className="text-sm font-bold text-white">Notificações</div>
@@ -326,6 +337,7 @@ export default function NotificationBell({
             <span className="uppercase tracking-wider text-zinc-700">Fase 4</span>
           </div>
         </div>
+        </>
       )}
     </div>
   );

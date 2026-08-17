@@ -265,7 +265,7 @@ export default function BibliotecaAulas() {
         </div>
 
         {/* ====== SELETOR 6 INSTRUMENTOS ====== */}
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-3">
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-3 pb-4 md:pb-1">
           {(loadingInst ? INSTRUMENTOS_FIXOS.map((f) => ({ ...f, id: "load", modules_count: 0, lessons_count: 0 } as InstrumentRow)) : instruments.length ? instruments : INSTRUMENTOS_FIXOS.map((f) => ({ name: f.name, emoji: f.emoji, id: "", missing: true, modules_count: 0, lessons_count: 0 }))).map((inst) => {
             const isActive = selectedInstId === inst.id;
             const missing = !!inst.missing || !inst.id;
@@ -332,14 +332,14 @@ export default function BibliotecaAulas() {
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            <div className="flex-1 overflow-y-auto p-3 pb-24 space-y-2" style={{ WebkitOverflowScrolling: 'touch' as any }}>
               {loadingTree && (
                 <div className="flex items-center gap-2 px-2 py-3 text-xs text-zinc-500">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Carregando trilha…
                 </div>
               )}
               {!loadingTree && modules.length === 0 && (
-                <div className="mt-8 text-center px-3">
+                <div className="mt-8 text-center px-3 pb-12">
                   <div className="text-3xl mb-2">📁</div>
                   <div className="text-sm font-semibold text-white">Sem módulos ainda</div>
                   <p className="mt-1 text-[11.5px] text-zinc-500">
@@ -455,7 +455,7 @@ export default function BibliotecaAulas() {
           </aside>
 
           {/* ====== COLUNA DIREITA: DETALHE ====== */}
-          <section ref={editorColRef as any} className="bg-[#050505] min-h-0 overflow-y-auto">
+          <section ref={editorColRef as any} className="bg-[#050505] min-h-0 overflow-y-auto px-3 py-3 md:px-6 md:py-5 pb-24" style={{ WebkitOverflowScrolling: 'touch' as any }}>
             {selectedType === "module" && selectedModuleId && (
               <ModuleEditor
                 key={"m" + selectedModuleId}
@@ -494,14 +494,14 @@ export default function BibliotecaAulas() {
 // ==============================
 function EmptyState({ instrumentsReady, onBootstrap }: { instrumentsReady: boolean; onBootstrap: () => void }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#22c55e]/20 via-[#f97316]/15 to-[#eab308]/10 flex items-center justify-center text-5xl border border-white/5 shadow-2xl">
+    <div className="flex-1 flex flex-col items-center justify-center px-5 md:px-6 pt-10 pb-28 md:py-16 md:pb-24 text-center w-full mx-auto max-w-lg">
+      <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-[#22c55e]/20 via-[#f97316]/15 to-[#eab308]/10 flex items-center justify-center text-5xl border border-white/5 shadow-2xl shrink-0">
         📚
       </div>
-      <h2 className="mt-5 text-xl md:text-2xl font-bold text-white">
+      <h2 className="mt-5 text-lg md:text-2xl font-bold text-white">
         {instrumentsReady ? "Selecione um instrumento" : "Biblioteca ainda não inicializada"}
       </h2>
-      <p className="mt-2 max-w-xl text-sm text-zinc-500">
+      <p className="mt-3 w-full max-w-md text-sm md:text-[15px] leading-relaxed text-zinc-500 break-words">
         {instrumentsReady
           ? "Clique em um dos 6 cards de instrumento no topo para começar a construir a sua trilha pedagógica completa."
           : "Os 6 instrumentos (Guitarra, Baixo, Bateria, Violão, Teclado, Ukulele) ainda não foram criados no banco. Basta clicar abaixo para gerá-los automaticamente."}
@@ -521,18 +521,18 @@ function EmptyState({ instrumentsReady, onBootstrap }: { instrumentsReady: boole
 
 function NothingSelectedHint({ instrument, modulesCount }: { instrument: string; modulesCount: number }) {
   return (
-    <div className="h-full min-h-0 flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="w-16 h-16 rounded-2xl bg-zinc-900/80 border border-white/5 flex items-center justify-center text-3xl">
+    <div className="w-full flex-1 flex flex-col items-center justify-center px-4 py-10 md:py-16 md:pb-28 text-center max-w-xl mx-auto">
+      <div className="w-16 h-16 rounded-2xl bg-zinc-900/80 border border-white/5 flex items-center justify-center text-3xl shrink-0">
         ✨
       </div>
-      <h3 className="mt-5 text-lg font-bold text-white">
+      <h3 className="mt-5 text-base md:text-lg font-bold text-white">
         {instrument ? `${instrument} · ${modulesCount} módulo${modulesCount === 1 ? "" : "s"}` : "Navegue pela trilha"}
       </h3>
-      <p className="mt-2 text-sm text-zinc-500 max-w-md">
+      <p className="mt-3 text-[13px] md:text-sm leading-relaxed text-zinc-500 max-w-sm break-words">
         Clique em um <span className="text-[#22c55e] font-semibold">módulo</span> para editar seus
-        objetivos e duração. <br />
+        objetivos e duração. <br className="hidden md:block" />
         Clique em uma <span className="text-[#f97316] font-semibold">aula</span> para descrever o conteúdo e anexar
-        PDF de cifras/tablaturas e backing tracks em MP3.
+        PDFs de cifras/tablaturas e backing tracks em MP3.
       </p>
     </div>
   );
