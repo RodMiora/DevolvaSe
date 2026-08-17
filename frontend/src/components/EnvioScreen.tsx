@@ -133,6 +133,8 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
   const exerciseVideoRef = useRef<HTMLVideoElement>(null);
   const lastModulesJsonRef = useRef<string>('');
   const localMutationAtRef = useRef<number>(0);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   const fetchData = async () => {
     try {
@@ -343,22 +345,127 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
   const MAX_UPLOAD_MB = 200;
   const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+  const MIN_UPLOAD_BYTES = 10 * 1024; // 10 KB
+
+  const VALID_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.3gp', '.webm', '.mkv', '.avi'];
+  const VALID_VIDEO_MIMES = new Set([
+    'video/mp4', 'video/quicktime', 'video/x-m4v', 'video/3gpp',
+    'video/webm', 'video/x-matroska', 'video/x-msvideo', 'application/octet-stream'
+  ]);
+
+  const isValidVideoFile = (file: File): { ok: boolean; reason?: string } => {
+    const name = String(file.name || '').toLowerCase();
+    const mime = String(file.type || '').toLowerCase();
+    const hasValidExt = VALID_VIDEO_EXTENSIONS.some(ext => name.endsWith(ext));
+    const hasValidMime = !mime || VALID_VIDEO_MIMES.has(mime);
+
+    if (!hasValidExt && !hasValidMime) {
+      return { ok: false, reason: `Formato não suportado (${mime || 'desconhecido'}). Use MP4, MOV, 3GP ou WebM.` };
+    }
+    return { ok: true };
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > MAX_UPLOAD_BYTES) {
-      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
-      alert(`O arquivo selecionado é muito pesado (${sizeMb} MB — máximo ${MAX_UPLOAD_MB} MB). Grave um vídeo mais curto (até 3 minutos) e tente novamente.`);
-      // Limpa o input para nao ficar com o arquivo grande na memoria
-      try { (e.target as HTMLInputElement).value = ''; } catch { /* noop */ }
-      return;
+    try {
+      const files = e.target.files;
+      console.log('[Upload][FileChange] Evento recebido — files:', files ? files.length : '0', files);
+
+      if (!files || files.length === 0) {
+        console.warn('[Upload][FileChange] Nenhum arquivo retornado pelo sistema (cancelado ou bug iOS).');
+        return;
+      }
+
+      const file = files[0];
+      const sizeKb = Math.round(file.size / 1024);
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+
+      console.log('[Upload][FileChange] Arquivo selecionado:', {
+        name: file.name,
+        type: file.type || '(vazio)',
+        size: file.size,
+        sizeKb,
+        sizeMb: `${sizeMb} MB`,
+        lastModified: new Date(file.lastModified).toISOString(),
+      });
+
+      // 1. Validação tamanho ZERO (bug iOS comum ao gravar câmera curta)
+      if (file.size === 0) {
+        alert('❌ Erro: o arquivo de vídeo veio vazio (0 bytes). Isso é um bug ocasional do iOS quando grava pela câmera. Por favor, TENTE NOVAMENTE gravando um vídeo um pouco mais longo (pelo menos 5 segundos).');
+        try { (e.target as HTMLInputElement).value = ''; } catch {}
+        return;
+      }
+
+      // 2. Validação tamanho MÍNIMO (10 KB)
+      if (file.size < MIN_UPLOAD_BYTES) {
+        alert(`❌ Erro: o arquivo de vídeo é muito pequeno (${sizeKb} KB). Por favor, grave um vídeo com pelo menos 5 segundos e tente novamente.`);
+        try { (e.target as HTMLInputElement).value = ''; } catch {}
+        return;
+      }
+
+      // 3. Validação tamanho MÁXIMO (200 MB)
+      if (file.size > MAX_UPLOAD_BYTES) {
+        alert(`O arquivo selecionado é muito pesado (${sizeMb} MB — máximo ${MAX_UPLOAD_MB} MB). Grave um vídeo mais curto (até 3 minutos) e tente novamente.`);
+        try { (e.target as HTMLInputElement).value = ''; } catch {}
+        return;
+      }
+
+      // 4. Validação formato (extensão + MIME)
+      const fmtCheck = isValidVideoFile(file);
+      if (!fmtCheck.ok) {
+        alert(`❌ ${fmtCheck.reason}`);
+        try { (e.target as HTMLInputElement).value = ''; } catch {}
+        return;
+      }
+
+      // 5. Corrige type vazio (alguns iPhones retornam "") para garantir envio correto
+      let finalFile = file;
+      if (!file.type || file.type === '') {
+        const name = String(file.name || '').toLowerCase();
+        let inferredMime = 'video/mp4';
+        if (name.endsWith('.mov') || name.endsWith('.qt')) inferredMime = 'video/quicktime';
+        else if (name.endsWith('.m4v')) inferredMime = 'video/x-m4v';
+        else if (name.endsWith('.3gp')) inferredMime = 'video/3gpp';
+        else if (name.endsWith('.webm')) inferredMime = 'video/webm';
+
+        console.log(`[Upload][FileChange] MIME type vazio detectado, inferindo para: ${inferredMime}`);
+
+        try {
+          finalFile = new File([file], file.name, { type: inferredMime, lastModified: file.lastModified });
+        } catch (err) {
+          console.warn('[Upload][FileChange] Não foi possível recriar o File com MIME correto (Safari antigo?), usando o original mesmo.', err);
+        }
+      }
+
+      setSelectedFile(finalFile);
+      console.log('[Upload][FileChange] ✅ Arquivo validado e armazenado. Pronto para enviar.');
+
+    } catch (error: any) {
+      console.error('[Upload][FileChange] ❌ Erro CRÍTICO ao processar arquivo:', error);
+      alert(`❌ Ocorreu um erro inesperado ao selecionar o vídeo. Por favor, feche o modal e tente novamente. Detalhes: ${error?.message || String(error)}`);
+      try { (e.target as HTMLInputElement).value = ''; } catch {}
     }
-    setSelectedFile(file);
   };
 
   const handleUpload = async () => {
-    if (!selectedFile || !selectedLessonForUpload || !studentId) return;
+    if (!selectedFile || !selectedLessonForUpload || !studentId) {
+      console.warn('[Upload][handleUpload] Faltando parâmetros (cancelado):', {
+        hasFile: !!selectedFile,
+        hasLesson: !!selectedLessonForUpload,
+        hasStudentId: !!studentId,
+      });
+      return;
+    }
+
+    const fileSizeMb = (selectedFile.size / (1024 * 1024)).toFixed(2);
+    console.log('[Upload][handleUpload] 🚀 Iniciando envio:', {
+      lessonId: selectedLessonForUpload.id,
+      lessonTitle: selectedLessonForUpload.title,
+      studentId: studentId.slice(0, 8) + '...',
+      fileName: selectedFile.name,
+      fileType: selectedFile.type,
+      fileSize: `${fileSizeMb} MB`,
+    });
+
     localMutationAtRef.current = Date.now();
     setModules(prev => prev.map(mod => ({
       ...mod,
@@ -372,9 +479,11 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
     try {
       const formData = new FormData();
-      formData.append('video', selectedFile);
+      formData.append('video', selectedFile, selectedFile.name);
       formData.append('student_id', studentId);
       formData.append('lesson_id', selectedLessonForUpload.id);
+
+      console.log('[Upload][handleUpload] FormData preparado com sucesso. Iniciando requisição HTTP POST para /upload-exercise');
 
       let progress = 0;
       const interval = setInterval(() => {
@@ -386,10 +495,14 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         setUploadProgress(Math.floor(progress));
       }, 200);
 
+      const startTime = Date.now();
       const response = await apiFetch('/upload-exercise', {
         method: 'POST',
         body: formData
       }, { prefix: 'Falha ao enviar vídeo', jsonBody: false, bearer: true, throwOnError: false });
+
+      const elapsedMs = Date.now() - startTime;
+      console.log(`[Upload][handleUpload] Resposta recebida em ${elapsedMs}ms — HTTP ${response.status} ${response.statusText}`);
 
       clearInterval(interval);
 
@@ -399,24 +512,27 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
         try {
           const text = await response.text();
           resBody = text ? JSON.parse(text) : {};
+          console.log('[Upload][handleUpload] Resposta body do backend:', resBody);
         } catch { resBody = {}; }
 
-        // Guard rail: backend truncou no teto de 1.5 MB
         if (resBody && typeof resBody === 'object' && resBody.warn === 'video_truncated_size_limit') {
+          console.warn('[Upload][handleUpload] ⚠️ Backend truncou vídeo no limite (1.5 MB)');
           setTimeout(() => {
-            alert('Atenção: seu vídeo foi cortado no limite de 1,5 MB por ser muito longo. Para o professor receber o exercício completo, grave no máximo 2 minutos de vídeo na próxima vez.');
+            alert('⚠️ Aviso: seu vídeo foi cortado no limite de 1,5 MB por ser muito longo. Para o professor receber o exercício COMPLETO, grave no máximo 2 minutos na próxima vez.\n\n✅ Mas não se preocupe! O vídeo já foi enviado com sucesso.');
             setUploadModalOpen(false);
             setSelectedFile(null);
             setSelectedLessonForUpload(null);
             fetchData();
           }, 700);
         } else {
+          console.log('[Upload][handleUpload] ✅ SUCESSO! Fechando modal e atualizando lista...');
           setTimeout(async () => {
+            alert('✅ Vídeo enviado com sucesso!\n\nSeu exercício já está na fila para o professor avaliar. Você receberá uma notificação quando houver feedback.');
             await fetchData();
             setUploadModalOpen(false);
             setSelectedFile(null);
             setSelectedLessonForUpload(null);
-          }, 500);
+          }, 300);
         }
       } else {
         const t = await response.text().catch(() => '');
@@ -425,13 +541,15 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
           const j = JSON.parse(t || '{}');
           detail = j?.detail ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : '';
         } catch {}
-        const msg = `Falha ao enviar vídeo — HTTP ${response.status}${response.statusText ? ` (${response.statusText})` : ''}${detail ? ' | ' + detail : ''}`;
-        console.error('Upload exercise failed:', msg);
+        const msg = `❌ Falha ao enviar vídeo — HTTP ${response.status}${response.statusText ? ` (${response.statusText})` : ''}${detail ? '\n\nDetalhe: ' + detail : ''}\n\nArquivo: ${selectedFile.name} (${fileSizeMb} MB)`;
+        console.error('[Upload][handleUpload] ❌ Erro HTTP do backend:', { status: response.status, statusText: response.statusText, detail, rawBody: t });
         alert(msg);
       }
-    } catch (error) {
-      console.error('Error uploading:', error);
-      apiAlert('Falha ao enviar vídeo', error);
+    } catch (error: any) {
+      console.error('[Upload][handleUpload] ❌ Erro EXCEÇÃO (fora do HTTP):', error);
+      const extraMsg = error?.message ? `\n\nDetalhes técnicos: ${error.message}` : '';
+      alert(`❌ Ocorreu um erro inesperado ao enviar seu vídeo. Por favor, verifique sua conexão com a internet e tente novamente.\n\nArquivo: ${selectedFile.name} (${fileSizeMb} MB)${extraMsg}`);
+      try { apiAlert('Falha ao enviar vídeo', error); } catch {}
     } finally {
       setUploading(false);
       if (!uploadModalOpen) setUploadProgress(0);
@@ -501,13 +619,64 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
               <div className="mb-4 p-4 bg-zinc-800 rounded-xl">
                 <p className="text-white font-medium truncate">{selectedFile.name}</p>
                 <p className="text-zinc-500 text-sm">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    try {
+                      if (cameraInputRef.current) cameraInputRef.current.value = '';
+                      if (galleryInputRef.current) galleryInputRef.current.value = '';
+                    } catch {}
+                  }}
+                  className="mt-3 text-xs text-red-400 hover:text-red-300 font-semibold"
+                >
+                  ✕ Remover arquivo (escolher outro)
+                </button>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center gap-4 p-8 border-2 border-dashed border-zinc-700 rounded-xl cursor-pointer mb-4 hover:border-zinc-600 transition-colors">
-                <Upload className="w-10 h-10 text-zinc-500" />
-                <p className="text-zinc-500">Selecione um vídeo</p>
-                <input type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
-              </label>
+              <div className="mb-4 space-y-3">
+                {/* INPUTS OCULTOS SEPARADOS */}
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="video/*,.mov,.mp4,.m4v,.3gp"
+                  capture="environment"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="video/*,.mov,.mp4,.m4v,.3gp,.webm,.mkv"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+
+                {/* Botão 1: Gravar com Câmera */}
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="w-full flex flex-col items-center justify-center gap-2 p-5 border-2 border-dashed border-[#f97316]/50 rounded-xl hover:border-[#f97316] hover:bg-[#f97316]/5 transition-all active:scale-[0.98]"
+                >
+                  <Video className="w-10 h-10 text-[#f97316]" />
+                  <div className="text-center">
+                    <p className="text-[#f97316] font-bold text-sm">📷 Gravar vídeo com a câmera</p>
+                    <p className="text-zinc-500 text-xs mt-0.5">Abre a câmera do celular agora</p>
+                  </div>
+                </button>
+
+                {/* Botão 2: Escolher da Galeria */}
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="w-full flex flex-col items-center justify-center gap-2 p-5 border-2 border-dashed border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 hover:bg-zinc-800/50 transition-all active:scale-[0.98]"
+                >
+                  <Upload className="w-10 h-10 text-zinc-500" />
+                  <div className="text-center">
+                    <p className="text-zinc-300 font-bold text-sm">🖼️ Escolher da galeria / arquivos</p>
+                    <p className="text-zinc-500 text-xs mt-0.5">Selecione um vídeo já gravado</p>
+                  </div>
+                </button>
+              </div>
             )}
             <div className="flex gap-3">
               <button
