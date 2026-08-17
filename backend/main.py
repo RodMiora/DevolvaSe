@@ -546,6 +546,51 @@ def get_ffmpeg_path():
             continue
     raise Exception("FFmpeg não encontrado! Instale o FFmpeg e adicione ao PATH ou coloque em C:\\ffmpeg\\ffmpeg.exe")
 
+
+def get_ffprobe_path():
+    # Procura ffprobe nos mesmos locais do ffmpeg (costumam estar juntos)
+    ffprobe_paths = [
+        'ffprobe',
+        r'C:\ffmpeg\ffprobe.exe',
+        r'C:\Program Files\FFmpeg\bin\ffprobe.exe',
+        r'C:\Program Files (x86)\FFmpeg\bin\ffprobe.exe',
+    ]
+    for path in ffprobe_paths:
+        try:
+            subprocess.run([path, '-version'], capture_output=True, check=True)
+            return path
+        except:
+            continue
+    return None  # None = fallback, pula validacao de duracao sem quebrar o fluxo
+
+
+def probe_video_duration(file_path: str) -> Optional[float]:
+    """Retorna duracao em segundos, ou None se nao for possivel medir."""
+    try:
+        ffprobe_path = get_ffprobe_path()
+        if not ffprobe_path:
+            print("[UPLOAD-EXERCISE] WARN: ffprobe nao encontrado, pulando validacao de duracao")
+            return None
+        result = subprocess.run(
+            [
+                ffprobe_path, '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                file_path
+            ],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            print(f"[UPLOAD-EXERCISE] WARN: ffprobe retornou erro: {result.stderr[:200]}")
+            return None
+        out = (result.stdout or '').strip()
+        if not out:
+            return None
+        return float(out)
+    except Exception as e:
+        print(f"[UPLOAD-EXERCISE] WARN: erro ao medir duracao (continuando): {e}")
+        return None
+
 class StudentCreate(BaseModel):
     full_name: str
     username: str
@@ -1532,22 +1577,72 @@ async def upload_exercise(
         # Salva temporariamente
         with open(temp_input, "wb") as buffer:
             buffer.write(await video.read())
+
+        # =========================================================
+        # GUARD RAIL 1: Duracao maxima 3 minutos (pre-encode)
+        # Se passar, retorna 400 e nem roda FFmpeg (economia de CPU)
+        # =========================================================
+        duracao_seg = probe_video_duration(temp_input)
+        if duracao_seg is not None and duracao_seg > 180:
+            minutos = int(duracao_seg // 60)
+            segundos = int(duracao_seg % 60)
+            print(f"[UPLOAD-EXERCISE] REJEITADO: duracao {minutos}m{segundos}s > 180s max")
+            # Limpa temp imediatamente antes de retornar
+            if os.path.exists(temp_input):
+                try: os.remove(temp_input)
+                except: pass
+            raise HTTPException(
+                status_code=400,
+                detail="Exercício muito longo. Grave vídeos de até 3 minutos."
+            )
             
         # Compressao via FFmpeg (Mobile-friendly: H.264, AAC)
-        # Limita a 720p para economia e performance
+        # Alvo: ~1 MB por video. Mantem clareza de audio.
+        # - CRF 30: video mais leve (28 -> 30). Para exercicios (movimento lento / mao) nao ha percepcao.
+        # - maxrate 700k + bufsize 1000k: impede picos que estouram 1 MB.
+        # - fs 1500k: fail-safe. NUNCA gera arquivo > ~1.5 MB.
+        # - audio AAC 96k: fidelidade de instrumento indistinguivel de 128k, -25% tamanho.
+        # - movflags +faststart: carrega instantaneamente na web/mobile (moov atom no inicio).
+        # - tune fastdecode: reduz uso de CPU ao reproduzir em celulares antigos.
+        # - pix_fmt yuv420p: compatibilidade universal com players / navegadores velhos.
+        # - Resolução limitada a 720p max (mantem aspect ratio original).
         ffmpeg_path = get_ffmpeg_path()
         cmd = [
             ffmpeg_path, '-i', temp_input,
-            '-vcodec', 'libx264', '-crf', '28',
-            '-preset', 'faster', '-tune', 'zerolatency',
+            '-vcodec', 'libx264',
+            '-crf', '30',
+            '-preset', 'faster',
+            '-tune', 'fastdecode',
+            '-maxrate', '700k',
+            '-bufsize', '1000k',
+            '-fs', '1500k',
             '-vf', "scale='min(720,iw)':-2",
-            '-acodec', 'aac', '-b:a', '128k',
+            '-pix_fmt', 'yuv420p',
+            '-acodec', 'aac',
+            '-b:a', '96k',
+            '-movflags', '+faststart',
             temp_output
         ]
         
         process = subprocess.run(cmd, capture_output=True, text=True)
         if process.returncode != 0:
             raise HTTPException(status_code=500, detail=f"FFmpeg error: {process.stderr}")
+
+        # =========================================================
+        # GUARD RAIL 2: Detecta se -fs 1500k cortou o arquivo
+        # Se arquivo final ficou >= 1500k - margem, foi truncado
+        # =========================================================
+        tamanho_saida_bytes = 0
+        try:
+            if os.path.exists(temp_output):
+                tamanho_saida_bytes = os.path.getsize(temp_output)
+        except:
+            pass
+        FS_TETO_BYTES = 1500 * 1024
+        MARGEM_TRUNC = 2048  # 2KB de margem para considerar como "atingiu teto"
+        foi_truncado = tamanho_saida_bytes > 0 and tamanho_saida_bytes >= (FS_TETO_BYTES - MARGEM_TRUNC)
+        if foi_truncado:
+            print(f"[UPLOAD-EXERCISE] WARN: arquivo comprimido atingiu teto de 1.5 MB e foi truncado ({tamanho_saida_bytes} bytes)")
             
         # Upload para R2
         r2_key = f"exercises/{student_id}/{temp_output}"
@@ -1698,12 +1793,17 @@ async def upload_exercise(
             # NUNCA quebrar fluxo core por notificação
             print(f"[notif] WARN: gatilho upload-exercise falhou (ignorado): {type(_ne).__name__}: {str(_ne)[:120]}")
 
-        return {
+        response_payload = {
             "success": True,
             "video_url": video_url,
             "exercise": new_exercise[0],
             "message": "Exercicio processado e enviado com sucesso"
         }
+        if foi_truncado:
+            response_payload["warn"] = "video_truncated_size_limit"
+        if duracao_seg is not None:
+            response_payload["duration_seconds"] = round(duracao_seg, 1)
+        return response_payload
         
     except Exception as e:
         print(f"ERRO UPLOAD-EXERCISE: {e}")

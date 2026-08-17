@@ -341,10 +341,20 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
     }
   };
 
+  const MAX_UPLOAD_MB = 200;
+  const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      alert(`O arquivo selecionado é muito pesado (${sizeMb} MB — máximo ${MAX_UPLOAD_MB} MB). Grave um vídeo mais curto (até 3 minutos) e tente novamente.`);
+      // Limpa o input para nao ficar com o arquivo grande na memoria
+      try { (e.target as HTMLInputElement).value = ''; } catch { /* noop */ }
+      return;
     }
+    setSelectedFile(file);
   };
 
   const handleUpload = async () => {
@@ -385,12 +395,29 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
 
       if (response.ok) {
         setUploadProgress(100);
-        setTimeout(async () => {
-          await fetchData();
-          setUploadModalOpen(false);
-          setSelectedFile(null);
-          setSelectedLessonForUpload(null);
-        }, 500);
+        let resBody: any = null;
+        try {
+          const text = await response.text();
+          resBody = text ? JSON.parse(text) : {};
+        } catch { resBody = {}; }
+
+        // Guard rail: backend truncou no teto de 1.5 MB
+        if (resBody && typeof resBody === 'object' && resBody.warn === 'video_truncated_size_limit') {
+          setTimeout(() => {
+            alert('Atenção: seu vídeo foi cortado no limite de 1,5 MB por ser muito longo. Para o professor receber o exercício completo, grave no máximo 2 minutos de vídeo na próxima vez.');
+            setUploadModalOpen(false);
+            setSelectedFile(null);
+            setSelectedLessonForUpload(null);
+            fetchData();
+          }, 700);
+        } else {
+          setTimeout(async () => {
+            await fetchData();
+            setUploadModalOpen(false);
+            setSelectedFile(null);
+            setSelectedLessonForUpload(null);
+          }, 500);
+        }
       } else {
         const t = await response.text().catch(() => '');
         let detail = '';
@@ -453,6 +480,13 @@ export default function EnvioScreen({ studentId }: { studentId: string }) {
               </button>
             </div>
             <p className="text-zinc-400 mb-4">{selectedLessonForUpload.title}</p>
+            <div className="mb-4 p-3 rounded-xl border border-yellow-500/30 bg-yellow-500/10 flex items-start gap-3">
+              <span className="text-yellow-400 text-lg leading-none shrink-0">⚠️</span>
+              <p className="text-yellow-200/90 text-[0.8125rem] font-semibold leading-snug">
+                Atenção: Envie vídeos com duração máxima de <strong>3 minutos</strong> (tamanho limite de <strong>{MAX_UPLOAD_MB} MB</strong>).
+                Vídeos muito longos serão automaticamente comprimidos para até ~1,5 MB.
+              </p>
+            </div>
             {uploading ? (
               <div className="mb-4">
                 <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
