@@ -227,39 +227,39 @@ export default function BibliotecaAulas() {
 
   return (
     <div
-      className="flex-1 min-h-0 flex flex-col bg-[#050505] w-full"
+      className="flex-1 min-h-0 flex flex-col bg-[#050505] w-full overflow-visible"
       style={{ WebkitOverflowScrolling: 'touch' as any }}
     >
       {/* ====== HEADER DA BIBLIOTECA ====== */}
-      <header className="border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur px-3 md:px-8 py-3 md:py-5 space-y-3 md:space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#22c55e]/30 via-[#f97316]/30 to-[#eab308]/30 flex items-center justify-center text-2xl border border-white/5">
-              <Layers3 className="w-6 h-6 text-[#eab308]" />
+      <header className="border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur px-2.5 md:px-8 py-2.5 md:py-5 space-y-2 md:space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="w-9 h-9 md:w-11 md:h-11 rounded-xl md:rounded-2xl bg-gradient-to-br from-[#22c55e]/30 via-[#f97316]/30 to-[#eab308]/30 flex items-center justify-center text-xl md:text-2xl border border-white/5 shrink-0">
+              <Layers3 className="w-5 h-5 md:w-6 md:h-6 text-[#eab308]" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-xl md:text-2xl font-bold text-white truncate">
-                Biblioteca Guiada de Cursos
+              <h1 className="text-[17px] md:text-2xl font-bold text-white truncate leading-tight">
+                Biblioteca Guiada
               </h1>
-              <p className="text-xs md:text-sm text-zinc-500 truncate">
-                Seu norte pedagógico · 6 instrumentos · Roteiro completo → vídeos gravados sob demanda por aluno
+              <p className="text-[10.5px] md:text-sm text-zinc-500 truncate leading-tight">
+                6 instrumentos · Roteiro completo
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 md:gap-2 w-full md:w-auto justify-start md:justify-end">
             <button
               onClick={() => refreshInstruments(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 text-xs md:text-sm font-semibold text-zinc-300 hover:bg-zinc-700 hover:text-white transition"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 md:px-3 md:py-2 rounded-lg md:rounded-xl bg-zinc-800 text-[11px] md:text-sm font-semibold text-zinc-300 hover:bg-zinc-700 hover:text-white transition shrink-0"
             >
-              <RefreshCw className={cn("w-4 h-4", loadingInst && "animate-spin")} />
+              <RefreshCw className={cn("w-3.5 h-3.5 md:w-4 md:h-4", loadingInst && "animate-spin")} />
               Atualizar
             </button>
             <button
               onClick={runBootstrap}
               disabled={bootstrapping}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white text-xs md:text-sm font-bold shadow-lg shadow-green-500/10 disabled:opacity-70 active:scale-[0.98] transition"
+              className="inline-flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 rounded-lg md:rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] text-white text-[11px] md:text-sm font-bold shadow-lg shadow-green-500/10 disabled:opacity-70 active:scale-[0.98] transition whitespace-nowrap shrink-0"
             >
-              <Sparkles className={cn("w-4 h-4", bootstrapping && "animate-spin")} />
+              <Sparkles className={cn("w-3.5 h-3.5 md:w-4 md:h-4", bootstrapping && "animate-spin")} />
               {bootstrapping ? "Preparando…" : "Preparar 6 instrumentos"}
             </button>
           </div>
@@ -280,9 +280,9 @@ export default function BibliotecaAulas() {
                 }}
                 className={cn(
                   "group relative transition-all text-left rounded-xl md:rounded-2xl border",
-                  // Mobile: padding compacto (3 linhas: emoji + nome + contadores), cabem 2 linhas de 3 cards em ~35% da tela
-                  // Desktop: padding normal
-                  "p-2 md:p-4",
+                  // Portrait mobile (3 cols): SUPER compacto para os 6 cards ocuparem NO MAX 30% da tela
+                  // landscape/desktop: visual normal
+                  "p-1.5 md:p-4",
                   isActive
                     ? "border-[#22c55e]/50 bg-gradient-to-br from-[#22c55e]/15 via-[#f97316]/10 to-transparent shadow-[0_0_30px_rgba(34,197,94,0.13)]"
                     : missing
@@ -291,7 +291,7 @@ export default function BibliotecaAulas() {
                 )}
               >
                 <div className="flex items-start justify-between gap-1 md:gap-2">
-                  <div className="text-xl md:text-3xl leading-none">{inst.emoji || "🎵"}</div>
+                  <div className="text-lg md:text-3xl leading-none">{inst.emoji || "🎵"}</div>
                   {missing && (
                     <div className="px-1.5 py-0.5 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-[9px] font-bold uppercase text-yellow-400 tracking-wide">
                       Não criado
@@ -301,9 +301,9 @@ export default function BibliotecaAulas() {
                     <CircleDot className="w-3.5 h-3.5 text-[#22c55e]" />
                   )}
                 </div>
-                <div className="mt-1 md:mt-2">
-                  <div className="text-[13px] md:text-[15px] font-bold text-white truncate leading-tight">{inst.name}</div>
-                  <div className="mt-0.5 md:mt-1 flex items-center gap-1 md:gap-2 text-[9.5px] md:text-[11px] text-zinc-500 leading-tight">
+                <div className="mt-0.5 md:mt-2">
+                  <div className="text-[12px] md:text-[15px] font-bold text-white truncate leading-tight">{inst.name}</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 md:gap-2 text-[8.5px] md:text-[11px] text-zinc-500 leading-tight">
                     <BookA className="w-3 h-3 opacity-70" />
                     <span>{inst.modules_count || 0} módulos</span>
                     <span className="opacity-50">·</span>
@@ -365,14 +365,15 @@ export default function BibliotecaAulas() {
                 </div>
               )}
               {!loadingTree && modules.length === 0 && (
-                <div className="mt-4 text-center px-3 py-10 rounded-xl border border-dashed border-white/10 bg-[#0d0d0d]/50">
-                  <div className="text-4xl mb-3">📁</div>
-                  <div className="text-base md:text-sm font-semibold text-white">Sem módulos ainda</div>
-                  <p className="mt-2 text-sm md:text-[12px] text-zinc-400 leading-relaxed max-w-xs mx-auto">
-                    Toque no botão <span className="text-[#22c55e] font-bold inline-flex items-center gap-1">
-                      <PlusCircle className="w-3.5 h-3.5" /> Módulo
+                <div className="mt-3 text-center px-3 py-8 rounded-xl border border-dashed border-white/10 bg-[#0d0d0d]/50 w-full max-w-[320px] mx-auto overflow-hidden">
+                  <div className="text-3xl mb-2">📁</div>
+                  <div className="text-[15px] md:text-sm font-semibold text-white">Sem módulos ainda</div>
+                  <p className="mt-2 text-[12px] md:text-[12px] text-zinc-400 leading-relaxed w-full break-words">
+                    Toque no botão{" "}
+                    <span className="text-[#22c55e] font-bold inline-flex items-center gap-1 whitespace-nowrap">
+                      <PlusCircle className="w-3.5 h-3.5 shrink-0" /> Módulo
                     </span>{" "}
-                    ali em cima 👆 para começar a criar a trilha de <span className="text-white font-semibold">{activeInstrument?.name}</span>.
+                    ali em cima 👆 para criar a trilha de <span className="text-white font-semibold whitespace-nowrap">{activeInstrument?.name || ""}</span>.
                   </p>
                 </div>
               )}
