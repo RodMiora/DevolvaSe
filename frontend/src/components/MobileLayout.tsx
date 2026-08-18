@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import Logo from "./Logo";
 import { TabNavigationProvider, TabId } from "./TabNavigationContext";
 import NotificationBell from "./NotificationBell";
+import { loadStudentTab, saveStudentTab } from "@/lib/persistNav";
 
 const TABS = [
   { id: "chat", label: "Chat" },
@@ -43,6 +44,27 @@ export default function MobileLayout({
 }) {
   const [[page, direction], setPage] = useState([1, 0]);
   const activeTab = page;
+  const tabLoadedRef = useRef(false);
+
+  // Restaurar aba do aluno do sessionStorage (evita reset para Aulas ao minimizar app)
+  useEffect(() => {
+    if (tabLoadedRef.current) return;
+    try {
+      const idx = loadStudentTab(userId);
+      if (typeof idx === "number" && idx >= 0 && idx <= 2 && idx !== activeTab) {
+        setPage([idx, 0]);
+      }
+    } catch {}
+    tabLoadedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  // Salvar aba sempre que mudar
+  useEffect(() => {
+    if (!tabLoadedRef.current) return;
+    saveStudentTab(userId, activeTab as 0 | 1 | 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, activeTab]);
 
   const goToTab = (tabId: string) => {
     const idx = TABS.findIndex(t => t.id === tabId);

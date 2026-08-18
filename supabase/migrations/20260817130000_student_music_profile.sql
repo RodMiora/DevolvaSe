@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS public.student_music_profiles (
   -- ============ REPERTORIO (3 colunas) ============
   -- Futuramente cada item sera {song_id: UUID, name: string} linkando p/ music_songs.id
   -- Por enquanto aceitamos: { "name": string, "song_id"?: UUID }
-  repertory JSONB NOT NULL DEFAULT '{}'::jsonb
+  repertory JSONB NOT NULL DEFAULT '{}'::jsonb,
   -- Formato:
   -- {
   --   "learning":  [ {song_id?, name?, added_at?}, ... ],

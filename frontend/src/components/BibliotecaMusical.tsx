@@ -27,6 +27,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch, apiAlert } from "@/lib/api";
+import {
+  loadBmDraft,
+  saveBmDraft,
+  clearBmDraft,
+  type BibliotecaMusicalDraft,
+} from "@/lib/persistNav";
 
 // ================================================================
 // Tipos (compatíveis com o retorno do backend /admin/music/*)
@@ -501,6 +507,135 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   useEffect(() => { void loadCatalogs(); }, [loadCatalogs]);
   useEffect(() => { void loadSongs(); }, [loadSongs]);
 
+  // =================== PERSISTÊNCIA DE RASCUNHO (Biblioteca Musical) ===================
+  // Salva rascunho automaticamente no localStorage sempre que qualquer campo
+  // do modal mudar. Perde o minimizado não apaga mais o formulário.
+  const draftFieldsSnapshot = useMemo((): Record<string, any> => ({
+    f_title, f_artist, f_composer, f_year, f_description,
+    f_mainStyle, f_subStyle, f_timeSig, f_bpm, f_originalKey,
+    f_predominant, f_level, f_rhythmC, f_harmC, f_techC,
+    f_chordCount, f_chordsText, f_hasBarre, f_has7, f_hasExt,
+    f_lyrics, f_listenUrl,
+  }), [
+    f_title, f_artist, f_composer, f_year, f_description,
+    f_mainStyle, f_subStyle, f_timeSig, f_bpm, f_originalKey,
+    f_predominant, f_level, f_rhythmC, f_harmC, f_techC,
+    f_chordCount, f_chordsText, f_hasBarre, f_has7, f_hasExt,
+    f_lyrics, f_listenUrl,
+  ]);
+
+  // Salvar rascunho sempre que modal aberto E algo mudar.
+  useEffect(() => {
+    if (!songModalOpen) return;
+    // Nao salva formulário VAZIO de criação para não gerar ruido.
+    const hasContent =
+      (f_title || f_artist || f_composer || f_description || f_mainStyle ||
+       f_subStyle || f_timeSig || f_originalKey || f_chordsText ||
+       f_lyrics || f_listenUrl) ||
+      (f_year !== null) || (f_bpm !== null) || (f_chordCount !== null) ||
+      f_hasBarre || f_has7 || f_hasExt ||
+      f_applicableIds.length > 0 || f_objectiveIds.length > 0 || f_techniqueIds.length > 0;
+    if (!hasContent && !editing) {
+      clearBmDraft(teacherId);
+      return;
+    }
+    const draft: BibliotecaMusicalDraft = {
+      saved_at_ms: Date.now(),
+      editingSongId: editing?.id || null,
+      fields: draftFieldsSnapshot,
+      selectedApplicableIds: [...f_applicableIds],
+      selectedObjectiveIds: [...f_objectiveIds],
+      selectedTechniqueIds: [...f_techniqueIds],
+    };
+    saveBmDraft(teacherId, draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [songModalOpen, draftFieldsSnapshot, f_applicableIds, f_objectiveIds, f_techniqueIds, editing?.id, teacherId]);
+
+  // Restaurar rascunho AUTOMATICAMENTE APÓS carregar catálogos (IDs de instrumentos/objetivos/técnicas
+  // precisam existir para validarmos antes de popular).
+  const draftRestoredRef = useRef(false);
+  const [showRestoreBanner, setShowRestoreBanner] = useState(false);
+  const pendingDraftRef = useRef<BibliotecaMusicalDraft | null>(null);
+
+  useEffect(() => {
+    if (draftRestoredRef.current) return;
+    if (!catalogsLoaded) return;
+    draftRestoredRef.current = true;
+    const d = loadBmDraft(teacherId);
+    if (!d) return;
+    // Só mostra banner se rascunho for de fato preenchido e recente (< 7 dias).
+    const isFresh = (Date.now() - (d.saved_at_ms || 0)) < (7 * 24 * 3600 * 1000);
+    if (!isFresh) { clearBmDraft(teacherId); return; }
+    pendingDraftRef.current = d;
+    setShowRestoreBanner(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogsLoaded, teacherId]);
+
+  const applyPendingDraft = () => {
+    const d = pendingDraftRef.current;
+    if (!d) { setShowRestoreBanner(false); return; }
+    // Se tem editingId existente, verificar se a musica existe na lista (se sim, carrega ela de verdade)
+    if (d.editingSongId && songs.length > 0) {
+      const sng = songs.find(s => s.id === d.editingSongId);
+      if (sng) setEditing(sng);
+    }
+    const f: Record<string, any> = d.fields || {};
+    setF_title(f.f_title || ""); setF_artist(f.f_artist || "");
+    setF_composer(f.f_composer || ""); setF_year(f.f_year ?? null);
+    setF_description(f.f_description || "");
+    setF_mainStyle(f.f_mainStyle || ""); setF_subStyle(f.f_subStyle || "");
+    setF_timeSig(f.f_timeSig || ""); setF_bpm(f.f_bpm ?? null);
+    setF_originalKey(f.f_originalKey || "");
+    setF_predominant(f.f_predominant || ""); setF_level(f.f_level || "");
+    setF_rhythmC(f.f_rhythmC || ""); setF_harmC(f.f_harmC || ""); setF_techC(f.f_techC || "");
+    setF_chordCount(f.f_chordCount ?? null); setF_chordsText(f.f_chordsText || "");
+    setF_hasBarre(!!f.f_hasBarre); setF_has7(!!f.f_has7); setF_hasExt(!!f.f_hasExt);
+    setF_lyrics(f.f_lyrics || ""); setF_listenUrl(f.f_listenUrl || "");
+    setF_applicableIds(Array.isArray(d.selectedApplicableIds) ? d.selectedApplicableIds : []);
+    setF_objectiveIds(Array.isArray(d.selectedObjectiveIds) ? d.selectedObjectiveIds : []);
+    setF_techniqueIds(Array.isArray(d.selectedTechniqueIds) ? d.selectedTechniqueIds : []);
+    setSongModalOpen(true);
+    setShowRestoreBanner(false);
+    pendingDraftRef.current = null;
+  };
+
+  const dismissRestoreBanner = () => {
+    clearBmDraft(teacherId);
+    pendingDraftRef.current = null;
+    setShowRestoreBanner(false);
+  };
+
+  // Fechar modal com limpeza do rascunho (já existe closeModal).
+  const closeModal = () => {
+    clearBmDraft(teacherId);
+    pendingDraftRef.current = null;
+    setShowRestoreBanner(false);
+    setSongModalOpen(false);
+    resetForm();
+  };
+
+  // Confirmar beforeunload se rascunho existir.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (e: BeforeUnloadEvent) => {
+      const hasDraft = !!loadBmDraft(teacherId);
+      if (hasDraft) {
+        e.preventDefault();
+        // eslint-disable-next-line no-param-reassign
+        e.returnValue = "Você tem um rascunho de música não salvo. Deseja sair mesmo assim?";
+        return e.returnValue;
+      }
+      return undefined;
+    };
+    window.addEventListener("beforeunload", handler);
+    window.addEventListener("pagehide", handler as any);
+    return () => {
+      window.removeEventListener("beforeunload", handler);
+      window.removeEventListener("pagehide", handler as any);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teacherId]);
+
   // Auto-scroll da coluna direita (padrão BibliotecaAulas)
   useEffect(() => {
     if (selectedSong && editorColRef.current) {
@@ -551,8 +686,6 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     setF_techniqueIds((song.techniques || []).map(t => t.id));
     setSongModalOpen(true);
   };
-
-  const closeModal = () => { setSongModalOpen(false); resetForm(); };
 
   const handleSave = async () => {
     if (!f_title.trim()) { alert("Nome da música é obrigatório."); return; }
@@ -656,6 +789,39 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-[#050505] w-full overflow-visible"
       style={{ WebkitOverflowScrolling: 'touch' as any }}>
+
+      {/* ====== Banner: rascunho encontrado ====== */}
+      {showRestoreBanner && (
+        <div className="mx-2.5 md:mx-8 mt-3 mb-1 px-3 py-2.5 rounded-xl border border-[#f97316]/30 bg-gradient-to-r from-[#f97316]/10 via-[#f59e0b]/10 to-transparent text-[12px] md:text-sm text-[#fed7aa] flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <div className="flex items-start md:items-center gap-2">
+            <Sparkles className="w-4 h-4 md:w-5 md:h-5 text-[#f97316] shrink-0 mt-0.5 md:mt-0" />
+            <div className="leading-snug">
+              <span className="font-bold text-[#fdba74]">Rascunho recuperado:</span>{" "}
+              Você tinha um cadastro de música iniciado e não salvo.
+              {" "}
+              {pendingDraftRef.current?.saved_at_ms ? (
+                <span className="text-[#fdba74]/80 text-[11px]">
+                  (salvo em {new Date(pendingDraftRef.current.saved_at_ms).toLocaleString("pt-BR")})
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={dismissRestoreBanner}
+              className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] md:text-xs font-semibold transition"
+            >
+              Descartar
+            </button>
+            <button
+              onClick={applyPendingDraft}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#f97316] to-[#ef4444] text-white text-[11px] md:text-xs font-bold transition active:scale-[0.98]"
+            >
+              Continuar rascunho
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ============ HEADER ============ */}
       <header className="border-b border-white/5 bg-[#0d0d0d]/60 backdrop-blur px-2.5 md:px-8 py-2.5 md:py-5 space-y-2 md:space-y-4">

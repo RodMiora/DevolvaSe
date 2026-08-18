@@ -48,6 +48,12 @@ import BibliotecaAulas from "./BibliotecaAulas";
 import BibliotecaMusical from "./BibliotecaMusical";
 import StudentMusicProfile from "./StudentMusicProfile";
 import {
+  loadTeacherNav,
+  saveTeacherNav,
+  clearTeacherNav,
+  type TeacherNavState,
+} from "@/lib/persistNav";
+import {
   resolveLessonStatus,
   subscribeStudentLessons,
   subscribeStudentExercises,
@@ -600,6 +606,73 @@ export default function TeacherDashboard() {
   // ============================================================
   // FIM FASE 2 - Prontuário
   // ============================================================
+
+  // ============================================================
+  // PERSISTÊNCIA DE NAVEGAÇÃO (contra perda ao minimizar app)
+  // - Carrega do sessionStorage logo após carregar professsor/alunos/cursos.
+  // - Salva sempre que qualquer navegação muda.
+  // - Limpa no logout.
+  // ============================================================
+  const navUserId = (teacherProfile?.id || teacherId) as (string | null | undefined);
+  const navRestoredRef = useRef<boolean>(false);
+
+  // Restaurar navegação APENAS quando listas e ids estiverem prontos.
+  useEffect(() => {
+    if (navRestoredRef.current) return;
+    if (!navUserId) return;
+    if (students.length === 0 && activeTab === 'alunos') return; // espera carregar alunos
+    if (courses.length === 0 && activeTab === 'cursos') return;  // espera carregar cursos
+    try {
+      const saved = loadTeacherNav(navUserId);
+      if (saved && typeof saved === 'object' && Object.keys(saved).length > 0) {
+        if (saved.activeTab) setActiveTab(saved.activeTab);
+        if (saved.viewMode) setViewMode(saved.viewMode);
+        if (saved.studentLessonsSubTab) setStudentLessonsSubTab(saved.studentLessonsSubTab);
+        if (typeof saved.isMobileDetailsView === 'boolean') setIsMobileDetailsView(saved.isMobileDetailsView);
+        // selectedStudent / selectedCourse / selectedInstrument — só aplica se os
+        // objetos existirem nas listas carregadas.
+        if (saved.selectedStudentId && students.length > 0) {
+          const s = students.find(x => x.id === saved.selectedStudentId) || null;
+          if (s) {
+            setSelectedStudent(s);
+            if (saved.selectedStudentInstrument && (s.instruments || []).includes(saved.selectedStudentInstrument)) {
+              setSelectedStudentInstrument(saved.selectedStudentInstrument);
+            }
+          }
+        }
+        if (saved.selectedCourseId && courses.length > 0) {
+          const c = courses.find(x => x.id === saved.selectedCourseId) || null;
+          if (c) setSelectedCourse(c);
+        }
+      }
+    } catch (e) {
+      console.warn("[persist] erro ao restaurar nav:", e);
+    } finally {
+      navRestoredRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navUserId, students.length, courses.length, activeTab]);
+
+  // Salvar navegação sempre que qualquer coisa relevante mudar.
+  useEffect(() => {
+    if (!navRestoredRef.current || !navUserId) return;
+    const next: TeacherNavState = {
+      activeTab,
+      viewMode,
+      selectedStudentId: selectedStudent?.id || null,
+      selectedCourseId: selectedCourse?.id || null,
+      selectedStudentInstrument: selectedStudentInstrument || null,
+      studentLessonsSubTab,
+      isMobileDetailsView,
+    };
+    saveTeacherNav(navUserId, next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    navUserId,
+    activeTab, viewMode,
+    selectedStudent?.id, selectedCourse?.id,
+    selectedStudentInstrument, studentLessonsSubTab, isMobileDetailsView
+  ]);
 
   useEffect(() => {
     fetchStudents();
@@ -1546,6 +1619,7 @@ export default function TeacherDashboard() {
   };
 
   const handleLogout = async () => {
+    try { clearTeacherNav(navUserId || teacherId); } catch {}
     await supabase.auth.signOut();
   };
 

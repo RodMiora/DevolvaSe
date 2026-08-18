@@ -2870,6 +2870,173 @@ def _lib_music_serialize_song(row: dict[str, Any], extra: Optional[dict[str, Any
 
 
 # =====================================================================
+# HELPERS REUTILIZÁVEIS DE QUERY (evitam duplicar lógica de filtros entre
+# a tela Biblioteca Musical, o modal adicionar música do Perfil Musical,
+# e a função de sugestões pedagógicas).
+# =====================================================================
+def _lib_music_query_songs_sync(
+    *,
+    search: Optional[str] = None,
+    instrument_id: Optional[str] = None,
+    predominant_instrument_id: Optional[str] = None,
+    level: Optional[str] = None,
+    main_style: Optional[str] = None,
+    time_signature: Optional[str] = None,
+    objective_id: Optional[str] = None,
+    technique_id: Optional[str] = None,
+    max_chords: Optional[int] = None,
+    bpm_min: Optional[int] = None,
+    bpm_max: Optional[int] = None,
+    rhythm_complexity: Optional[str] = None,
+    harmonic_complexity: Optional[str] = None,
+    technical_complexity: Optional[str] = None,
+    only_favorites: Optional[bool] = False,
+    teacher_id: Optional[str] = None,
+    exclude_song_ids: Optional[list[str]] = None,
+    limit: Optional[int] = 500,
+    operation_label: str = "music:list",
+) -> list[dict[str, Any]]:
+    """
+    Query sync (roda dentro de ThreadPoolExecutor) que combina TODOS os filtros
+    existentes da Biblioteca Musical + hidrata joins.
+    - Usado por: GET /admin/music/songs, modal adicionar música, sugestões.
+    - NÃO DUPLICA lógica — essa função é FONTE ÚNICA dos filtros.
+    """
+    from supabase import Client as _Client
+    songs_raw: list[dict] = []
+
+    def _sel(c: _Client):
+        q = c.table('music_songs').select('*')
+        if search and search.strip():
+            s = f"%{search.strip()}%"
+            q = q.or_(f"title.ilike.{s},artist.ilike.{s},composer.ilike.{s}")
+        if level: q = q.eq('level', level)
+        if main_style: q = q.eq('main_style', main_style)
+        if time_signature: q = q.eq('time_signature', time_signature)
+        if predominant_instrument_id: q = q.eq('predominant_instrument_id', predominant_instrument_id)
+        if max_chords is not None: q = q.lte('chord_count', max_chords)
+        if bpm_min is not None: q = q.gte('bpm', bpm_min)
+        if bpm_max is not None: q = q.lte('bpm', bpm_max)
+        if rhythm_complexity: q = q.eq('rhythm_complexity', rhythm_complexity)
+        if harmonic_complexity: q = q.eq('harmonic_complexity', harmonic_complexity)
+        if technical_complexity: q = q.eq('technical_complexity', technical_complexity)
+
+        # Filtros N:N
+        ids_song_filtered: Optional[set[str]] = None
+        if instrument_id:
+            try:
+                r_join = c.table('music_song_applicable_instruments').select('song_id').eq('instrument_id', instrument_id).execute()
+                set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
+        if objective_id:
+            try:
+                r_join = c.table('music_song_objectives').select('song_id').eq('objective_id', objective_id).execute()
+                set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
+        if technique_id:
+            try:
+                r_join = c.table('music_song_techniques').select('song_id').eq('technique_id', technique_id).execute()
+                set1 = {str(r['song_id']) for r in (r_join.data or [])}
+                ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
+
+        # Favoritos
+        fav_ids: Optional[set[str]] = None
+        if only_favorites and teacher_id:
+            try:
+                r_fav = c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).execute()
+                fav_ids = {str(r['song_id']) for r in (r_fav.data or [])}
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
+
+        q = q.order('updated_at', desc=True)
+        if limit: q = q.limit(limit)
+        result = q.execute()
+        rows = list(result.data or [])
+        if ids_song_filtered is not None:
+            rows = [r for r in rows if str(r.get('id')) in ids_song_filtered]
+        if fav_ids is not None:
+            rows = [r for r in rows if str(r.get('id')) in fav_ids]
+        if exclude_song_ids:
+            excl = {str(x) for x in exclude_song_ids}
+            rows = [r for r in rows if str(r.get('id')) not in excl]
+        return rows
+
+    songs_raw = execute_supabase_with_retry(_sel, operation_label=operation_label) or []
+
+    # Hidrata joins
+    song_ids = {str(r["id"]) for r in songs_raw if r.get("id")}
+    instrument_map: dict[str, dict] = {}
+    song_insts: dict[str, list[dict]] = {}
+    song_objs: dict[str, list[dict]] = {}
+    song_tecs: dict[str, list[dict]] = {}
+    song_fav_set: set[str] = set()
+
+    try:
+        pred_ids = {str(r["predominant_instrument_id"]) for r in songs_raw if r.get("predominant_instrument_id")}
+        if pred_ids:
+            def _sel2(c: _Client):
+                return c.table('instruments').select('id, name').in_('id', list(pred_ids)).execute()
+            r = execute_supabase_with_retry(_sel2, operation_label="music:pred-insts")
+            for row in (r.data or []): instrument_map[str(row["id"])] = dict(row)
+        if song_ids:
+            try:
+                def _s_i(c: _Client):
+                    return c.table('music_song_applicable_instruments').select('song_id, instrument_id, instruments(id, name)').in_('song_id', list(song_ids)).execute()
+                r = execute_supabase_with_retry(_s_i, operation_label="music:app-insts")
+                for row in (r.data or []):
+                    i = row.get("instruments") or {"id": row.get("instrument_id")}
+                    song_insts.setdefault(str(row["song_id"]), []).append(dict(i))
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
+            try:
+                def _s_o(c: _Client):
+                    return c.table('music_song_objectives').select('song_id, objective_id, music_pedagogical_objectives(id, name, slug)').in_('song_id', list(song_ids)).execute()
+                r = execute_supabase_with_retry(_s_o, operation_label="music:objs")
+                for row in (r.data or []):
+                    o = row.get("music_pedagogical_objectives") or {"id": row.get("objective_id")}
+                    song_objs.setdefault(str(row["song_id"]), []).append(dict(o))
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
+            try:
+                def _s_t(c: _Client):
+                    return c.table('music_song_techniques').select('song_id, technique_id, music_techniques(id, name, slug, category)').in_('song_id', list(song_ids)).execute()
+                r = execute_supabase_with_retry(_s_t, operation_label="music:tecs")
+                for row in (r.data or []):
+                    t = row.get("music_techniques") or {"id": row.get("technique_id")}
+                    song_tecs.setdefault(str(row["song_id"]), []).append(dict(t))
+            except Exception:
+                if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
+            if teacher_id:
+                try:
+                    def _s_f(c: _Client):
+                        return c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).in_('song_id', list(song_ids)).execute()
+                    r = execute_supabase_with_retry(_s_f, operation_label="music:favs")
+                    song_fav_set = {str(row["song_id"]) for row in (r.data or [])}
+                except Exception:
+                    if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
+    except Exception as _hydr_e:
+        print(f"[music] WARN hidrate: {type(_hydr_e).__name__}: {str(_hydr_e)[:180]}")
+
+    out = []
+    for r in songs_raw:
+        sid = str(r["id"])
+        s = _lib_music_serialize_song(r, {"_is_favorite": sid in song_fav_set})
+        pred_id = r.get("predominant_instrument_id")
+        s["predominant_instrument"] = instrument_map.get(str(pred_id)) if pred_id else None
+        s["applicable_instruments"] = song_insts.get(sid, [])
+        s["objectives"] = song_objs.get(sid, [])
+        s["techniques"] = song_tecs.get(sid, [])
+        out.append(s)
+    return out
+
+
+# =====================================================================
 # BIBLIOTECA MUSICAL - Endpoints (/admin/music/*)
 # =====================================================================
 
@@ -2960,157 +3127,33 @@ async def admin_music_list_songs(
     teacher_id: Optional[str] = None,
 ):
     """Lista músicas com TODOS os filtros combináveis.
-    - Usa INNER JOINs em tabelas de ligação quando um filtro de N:N é passado.
-    - Suporta busca parcial por title/artist.
-    - Filtro de is_favorite depende de teacher_id.
+    - Implementação via _lib_music_query_songs_sync (helper FONTE ÚNICA dos filtros,
+      reutilizado também pelo modal adicionar música do Perfil Musical e sugestões).
     """
     from concurrent.futures import ThreadPoolExecutor
     import asyncio as _aio
     try:
-        def _sync():
-            songs_raw: list[dict] = []
-
-            # Query base
-            def _sel(c: Client):
-                q = c.table('music_songs').select('*')
-
-                if search and search.strip():
-                    s = f"%{search.strip()}%"
-                    q = q.or_(f"title.ilike.{s},artist.ilike.{s},composer.ilike.{s}")
-                if level: q = q.eq('level', level)
-                if main_style: q = q.eq('main_style', main_style)
-                if time_signature: q = q.eq('time_signature', time_signature)
-                if predominant_instrument_id: q = q.eq('predominant_instrument_id', predominant_instrument_id)
-                if max_chords is not None: q = q.lte('chord_count', max_chords)
-                if bpm_min is not None: q = q.gte('bpm', bpm_min)
-                if bpm_max is not None: q = q.lte('bpm', bpm_max)
-                if rhythm_complexity: q = q.eq('rhythm_complexity', rhythm_complexity)
-                if harmonic_complexity: q = q.eq('harmonic_complexity', harmonic_complexity)
-                if technical_complexity: q = q.eq('technical_complexity', technical_complexity)
-
-                # Filtros N:N (instrumentos aplicáveis, objetivos, técnicas)
-                ids_song_filtered: Optional[set[str]] = None
-                if instrument_id:
-                    try:
-                        r_join = c.table('music_song_applicable_instruments').select('song_id').eq('instrument_id', instrument_id).execute()
-                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
-                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
-
-                if objective_id:
-                    try:
-                        r_join = c.table('music_song_objectives').select('song_id').eq('objective_id', objective_id).execute()
-                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
-                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
-
-                if technique_id:
-                    try:
-                        r_join = c.table('music_song_techniques').select('song_id').eq('technique_id', technique_id).execute()
-                        set1 = {str(r['song_id']) for r in (r_join.data or [])}
-                        ids_song_filtered = set1 if ids_song_filtered is None else (ids_song_filtered & set1)
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
-
-                # Favoritos
-                fav_ids: Optional[set[str]] = None
-                if only_favorites and teacher_id:
-                    try:
-                        r_fav = c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).execute()
-                        fav_ids = {str(r['song_id']) for r in (r_fav.data or [])}
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
-
-                q = q.order('updated_at', desc=True).limit(500)
-                result = q.execute()
-                rows = list(result.data or [])
-
-                if ids_song_filtered is not None:
-                    rows = [r for r in rows if str(r.get('id')) in ids_song_filtered]
-                if fav_ids is not None:
-                    rows = [r for r in rows if str(r.get('id')) in fav_ids]
-
-                return rows
-
-            songs_raw = execute_supabase_with_retry(_sel, operation_label="music:list") or []
-
-            # Hidrata: instrumentos, objetivos, técnicas
-            song_ids = {str(r["id"]) for r in songs_raw if r.get("id")}
-            instrument_map: dict[str, dict] = {}
-            song_insts: dict[str, list[dict]] = {}
-            song_objs: dict[str, list[dict]] = {}
-            song_tecs: dict[str, list[dict]] = {}
-            song_fav_set: set[str] = set()
-
-            try:
-                # Predominant instrument cache
-                pred_ids = {str(r["predominant_instrument_id"]) for r in songs_raw if r.get("predominant_instrument_id")}
-                if pred_ids:
-                    def _sel2(c: Client):
-                        return c.table('instruments').select('id, name').in_('id', list(pred_ids)).execute()
-                    r = execute_supabase_with_retry(_sel2, operation_label="music:pred-insts")
-                    for row in (r.data or []): instrument_map[str(row["id"])] = dict(row)
-
-                if song_ids:
-                    # Applicable instruments
-                    try:
-                        def _s_i(c: Client):
-                            return c.table('music_song_applicable_instruments').select('song_id, instrument_id, instruments(id, name)').in_('song_id', list(song_ids)).execute()
-                        r = execute_supabase_with_retry(_s_i, operation_label="music:app-insts")
-                        for row in (r.data or []):
-                            i = row.get("instruments") or {"id": row.get("instrument_id")}
-                            song_insts.setdefault(str(row["song_id"]), []).append(dict(i))
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_applicable_instruments"): raise
-
-                    # Objectives
-                    try:
-                        def _s_o(c: Client):
-                            return c.table('music_song_objectives').select('song_id, objective_id, music_pedagogical_objectives(id, name, slug)').in_('song_id', list(song_ids)).execute()
-                        r = execute_supabase_with_retry(_s_o, operation_label="music:objs")
-                        for row in (r.data or []):
-                            o = row.get("music_pedagogical_objectives") or {"id": row.get("objective_id")}
-                            song_objs.setdefault(str(row["song_id"]), []).append(dict(o))
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_objectives"): raise
-
-                    # Techniques
-                    try:
-                        def _s_t(c: Client):
-                            return c.table('music_song_techniques').select('song_id, technique_id, music_techniques(id, name, slug, category)').in_('song_id', list(song_ids)).execute()
-                        r = execute_supabase_with_retry(_s_t, operation_label="music:tecs")
-                        for row in (r.data or []):
-                            t = row.get("music_techniques") or {"id": row.get("technique_id")}
-                            song_tecs.setdefault(str(row["song_id"]), []).append(dict(t))
-                    except Exception:
-                        if not _is_table_or_relation_missing_error(Exception(), "music_song_techniques"): raise
-
-                    # Favoritos
-                    if teacher_id:
-                        try:
-                            def _s_f(c: Client):
-                                return c.table('music_song_favorites').select('song_id').eq('teacher_id', teacher_id).in_('song_id', list(song_ids)).execute()
-                            r = execute_supabase_with_retry(_s_f, operation_label="music:favs")
-                            song_fav_set = {str(row["song_id"]) for row in (r.data or [])}
-                        except Exception:
-                            if not _is_table_or_relation_missing_error(Exception(), "music_song_favorites"): raise
-            except Exception as _hydr_e:
-                print(f"[music] WARN hidrate: {type(_hydr_e).__name__}: {str(_hydr_e)[:180]}")
-
-            out = []
-            for r in songs_raw:
-                sid = str(r["id"])
-                s = _lib_music_serialize_song(r, {"_is_favorite": sid in song_fav_set})
-                pred_id = r.get("predominant_instrument_id")
-                s["predominant_instrument"] = instrument_map.get(str(pred_id)) if pred_id else None
-                s["applicable_instruments"] = song_insts.get(sid, [])
-                s["objectives"] = song_objs.get(sid, [])
-                s["techniques"] = song_tecs.get(sid, [])
-                out.append(s)
-            return out
-
+        def _sync() -> list[dict[str, Any]]:
+            return _lib_music_query_songs_sync(
+                search=search,
+                instrument_id=instrument_id,
+                predominant_instrument_id=predominant_instrument_id,
+                level=level,
+                main_style=main_style,
+                time_signature=time_signature,
+                objective_id=objective_id,
+                technique_id=technique_id,
+                max_chords=max_chords,
+                bpm_min=bpm_min,
+                bpm_max=bpm_max,
+                rhythm_complexity=rhythm_complexity,
+                harmonic_complexity=harmonic_complexity,
+                technical_complexity=technical_complexity,
+                only_favorites=bool(only_favorites),
+                teacher_id=teacher_id,
+                limit=500,
+                operation_label="music:list",
+            )
         loop = _aio.get_running_loop()
         songs = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
         return {"success": True, "count": len(songs), "songs": songs}
@@ -3558,6 +3601,470 @@ async def admin_student_patch_music_profile(student_id: str, payload: StudentMus
         if _is_table_or_relation_missing_error(e, "student_music_profiles"):
             raise HTTPException(status_code=503, detail="tabela_student_music_profiles_nao_existe_aplique_migration")
         print(f"[music-profile] ERRO upsert {student_id}: {type(e).__name__}: {str(e)[:300]}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================
+# REPERTÓRIO DO ALUNO (Integração Perfil Musical <-> Biblioteca Musical)
+# Models + 5 endpoints + scoring modular pedagógico.
+# Princípios:
+#   - music_songs é FONTE ÚNICA. Nunca copiamos campos da música.
+#   - student_music_repertory guarda apenas student_id + song_id (UNIQUE) +
+#     dados específicos do aluno (status, progresso, observacao, datas).
+#   - Filtros de busca reutilizam _lib_music_query_songs_sync.
+#   - Sugestões usam função modular de scoring (fácil trocar p/ IA).
+# =====================================================================
+
+class StudentRepertoryAddRequest(BaseModel):
+    song_id: str
+    status: Optional[str] = "planned"   # planned | learning | mastered
+    observacao: Optional[str] = None
+    ordem: Optional[int] = None
+
+
+class StudentRepertoryUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    progresso: Optional[int] = None     # 0..100
+    observacao: Optional[str] = None
+    data_inicio: Optional[str] = None   # ISO date
+    data_conclusao: Optional[str] = None
+    ordem: Optional[int] = None
+
+
+_VALID_REPERTORY_STATUSES = {"planned", "learning", "mastered"}
+
+# Mapa: nível textual -> posição. Usado no matching por nível.
+_LEVEL_RANK: dict[str, int] = {
+    "iniciante": 0, "basico": 1, "intermediario": 2,
+    "intermediario_avancado": 3, "avancado": 4,
+}
+
+
+# ---------------------------------------------------------------------
+# Scoring modular pedagógico
+# ---------------------------------------------------------------------
+def _calc_song_match(
+    song: dict[str, Any],
+    profile: dict[str, Any],
+) -> tuple[int, list[str]]:
+    """
+    Calcula pontuação de compatibilidade entre 1 música e o Perfil Musical de 1 aluno.
+    - Retorna: (score_absoluto, lista_de_motivos).
+    - Modular: basta trocar essa função no futuro p/ adicionar IA real.
+    - Score máximo teórico = 105 (normalizado no endpoint p/ 0..100).
+    """
+    score = 0
+    reasons: list[str] = []
+
+    # 1) Instrumento compatível (+30)
+    song_inst_names: set[str] = set()
+    if isinstance(song.get("applicable_instruments"), list):
+        for it in song["applicable_instruments"]:
+            if isinstance(it, dict) and it.get("name"):
+                song_inst_names.add(str(it["name"]).strip().lower())
+    if song.get("predominant_instrument") and isinstance(song["predominant_instrument"], dict):
+        p_name = song["predominant_instrument"].get("name")
+        if p_name: song_inst_names.add(str(p_name).strip().lower())
+    student_main = str((profile or {}).get("main_instrument") or "").strip().lower()
+    if student_main and student_main in song_inst_names:
+        score += 30
+        reasons.append("✓ Instrumento compatível")
+    else:
+        student_others = [str(x).strip().lower() for x in list((profile or {}).get("other_instruments") or []) if x]
+        if any(si in song_inst_names for si in student_others):
+            score += 20
+            reasons.append("✓ Instrumento secundário compatível")
+
+    # 2) Nível compatível (+20)
+    song_level = str(song.get("level") or "").strip()
+    student_level = str((profile or {}).get("level") or "").strip()
+    if song_level in _LEVEL_RANK and student_level in _LEVEL_RANK:
+        diff = _LEVEL_RANK[song_level] - _LEVEL_RANK[student_level]
+        if -1 <= diff <= 0:         # mesma dificuldade ou 1 abaixo (boa revisão)
+            score += 20
+            reasons.append("✓ Nível adequado")
+        elif diff == 1:              # 1 acima (desafio controlado)
+            score += 12
+            reasons.append("✓ Nível com pequeno desafio")
+        elif abs(diff) >= 2 and diff < 0:
+            score += 5
+            reasons.append("~ Nível fácil para o aluno")
+    elif not student_level and song_level == "iniciante":
+        score += 10
+
+    # 3) Estilo preferencial (+15)
+    song_style = str(song.get("main_style") or "").strip().lower()
+    student_styles = [str(x).strip().lower() for x in list((profile or {}).get("styles") or []) if x]
+    pref_styles = [str(x).strip().lower() for x in list(((profile or {}).get("preferences") or {}).get("favorite_styles") or []) if x]
+    all_pref = list(set(student_styles + pref_styles))
+    if song_style and song_style in all_pref:
+        score += 15
+        reasons.append("✓ Estilo preferido pelo aluno")
+
+    # 4) Objetivo compatível (+15)
+    song_obj_names = set()
+    for o in (song.get("objectives") or []):
+        if isinstance(o, dict) and o.get("name"):
+            song_obj_names.add(str(o["name"]).strip().lower())
+    student_objs = [str(x).strip().lower() for x in list((profile or {}).get("objectives") or []) if x]
+    student_main_obj = str((profile or {}).get("main_objective") or "").strip().lower()
+    all_objs = list(set(student_objs + [student_main_obj] if student_main_obj else student_objs))
+    hit = [so for so in all_objs if any(so in sn for sn in song_obj_names)]
+    if hit:
+        score += 15
+        reasons.append("✓ Objetivo compatível")
+
+    # 5) Habilidade compatível (+10)
+    song_tec_names = set()
+    for t in (song.get("techniques") or []):
+        if isinstance(t, dict) and t.get("name"):
+            song_tec_names.add(str(t["name"]).strip().lower())
+    student_skills = (profile or {}).get("skills") or {}
+    em_desenvolvimento: list[str] = []
+    for cat in ("tecnica", "ritmo", "teoria"):
+        for skill_name, lvl in (student_skills.get(cat) or {}).items():
+            if str(lvl) in ("em_desenvolvimento", "basico"):
+                # normaliza: acordes_abertos -> acordes abertos
+                em_desenvolvimento.append(str(skill_name).replace("_", " ").lower())
+    hit_skill = [sk for sk in em_desenvolvimento if any(sk in sn for sn in song_tec_names)]
+    if hit_skill:
+        score += 10
+        reasons.append("✓ Trabalha habilidade em desenvolvimento")
+
+    # 6) Dificuldade alinhada (+10)
+    student_diffs = [str(x).strip().lower() for x in list((profile or {}).get("difficulties") or []) if x]
+    # combina objetivos + técnicas
+    objs_plus_tecs = {*song_obj_names, *song_tec_names}
+    hit_diff = [d for d in student_diffs if any(d in it for it in objs_plus_tecs)]
+    if hit_diff:
+        score += 10
+        reasons.append("✓ Trabalha ponto de dificuldade do aluno")
+
+    # 7) Quantidade de acordes adequada (+5)
+    try:
+        cc = int(song.get("chord_count") or 0)
+    except Exception:
+        cc = 0
+    if student_level == "iniciante":
+        if 0 < cc <= 4:
+            score += 5
+            reasons.append("✓ Quantidade de acordes adequada")
+    elif student_level == "basico":
+        if 0 < cc <= 6:
+            score += 5
+            reasons.append("✓ Quantidade de acordes adequada")
+
+    # 8) Compasso compatível (+5)
+    song_ts = str(song.get("time_signature") or "").strip()
+    # Se o aluno tem dificuldade "tempo" ou "ritmo" e música tem compasso conhecido, pontua levemente.
+    if song_ts and any(d in song_ts for d in student_diffs if d in ("tempo", "ritmo", "compasso")):
+        score += 5
+        reasons.append("✓ Compasso alinhado com foco atual")
+
+    return score, reasons
+
+
+# ---------------------------------------------------------------------
+# 1. GET /admin/students/{student_id}/repertory
+# ---------------------------------------------------------------------
+@app.get("/admin/students/{student_id}/repertory")
+async def admin_student_get_repertory(student_id: str):
+    """Retorna repertório do aluno com cada song HIDRATADO (não copia nada)."""
+    try:
+        def _sync() -> dict[str, Any]:
+            sb = _build_supabase_client()
+            rows = []
+            try:
+                r = sb.table("student_music_repertory") \
+                    .select("*") \
+                    .eq("student_id", student_id) \
+                    .order("ordem", nulls_first=False) \
+                    .order("created_at", desc=True) \
+                    .execute()
+                rows = list(r.data or [])
+            except Exception as _q:
+                if not _is_table_or_relation_missing_error(_q, "student_music_repertory"):
+                    raise
+                rows = []
+
+            song_ids_raw = [str(r["song_id"]) for r in rows if r.get("song_id")]
+            songs_hydrated: dict[str, dict[str, Any]] = {}
+            if song_ids_raw:
+                # Reutiliza helper para hidratar (instrumentos/objetivos/técnicas).
+                try:
+                    all_songs = _lib_music_query_songs_sync(limit=5000)
+                    for s in all_songs:
+                        if str(s.get("id")) in song_ids_raw:
+                            songs_hydrated[str(s["id"])] = s
+                except Exception as _h:
+                    print(f"[repertory] WARN hidratar: {type(_h).__name__}: {str(_h)[:180]}")
+
+            items = []
+            for r in rows:
+                sid = str(r.get("song_id"))
+                item: dict[str, Any] = {
+                    "id": r.get("id"),
+                    "student_id": r.get("student_id"),
+                    "song_id": sid,
+                    "status": r.get("status") or "planned",
+                    "progresso": int(r.get("progresso") or 0),
+                    "observacao": r.get("observacao"),
+                    "data_inicio": r.get("data_inicio"),
+                    "data_conclusao": r.get("data_conclusao"),
+                    "ordem": r.get("ordem"),
+                    "created_at": r.get("created_at"),
+                    "updated_at": r.get("updated_at"),
+                    "song": songs_hydrated.get(sid) or {"id": sid, "title": "Música não encontrada"},
+                }
+                items.append(item)
+            return {"items": items}
+
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        data = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, **data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e, "student_music_repertory"):
+            return {"success": True, "items": [], "note": "student_music_repertory_missing_apply_migration"}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------
+# 2. POST /admin/students/{student_id}/repertory
+# ---------------------------------------------------------------------
+@app.post("/admin/students/{student_id}/repertory")
+async def admin_student_add_repertory(student_id: str, payload: StudentRepertoryAddRequest):
+    """Adiciona música ao repertório (vínculo único). Retorna 409 se já existir."""
+    status = (payload.status or "planned").strip().lower()
+    if status not in _VALID_REPERTORY_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status inválido: {status}")
+    if not str(payload.song_id).strip():
+        raise HTTPException(status_code=400, detail="song_id é obrigatório")
+    try:
+        def _sync():
+            sb = _build_supabase_client()
+            # Verifica duplicação
+            ex = sb.table("student_music_repertory") \
+                .select("*") \
+                .eq("student_id", student_id) \
+                .eq("song_id", str(payload.song_id).strip()) \
+                .limit(1).execute()
+            if ex.data and len(ex.data) > 0:
+                return {"already_exists": True, "row": ex.data[0]}
+            ins = {
+                "student_id": student_id,
+                "song_id": str(payload.song_id).strip(),
+                "status": status,
+                "progresso": 0,
+            }
+            if payload.observacao is not None: ins["observacao"] = payload.observacao
+            if payload.ordem is not None: ins["ordem"] = int(payload.ordem)
+            r = sb.table("student_music_repertory").insert(ins).execute()
+            return {"already_exists": False, "row": r.data[0] if r.data else None}
+
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        res = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        if res.get("already_exists"):
+            current = res.get("row") or {}
+            raise HTTPException(status_code=409, detail={
+                "already_exists": True,
+                "current_status": current.get("status") or "planned",
+                "repertory_id": current.get("id"),
+                "song_id": current.get("song_id"),
+                "message": "Esta música já está no repertório deste aluno.",
+            })
+        return {"success": True, "added": True, "row": res.get("row")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e, "student_music_repertory"):
+            raise HTTPException(status_code=503, detail="tabela_student_music_repertory_nao_existe_aplique_migration")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------
+# 3. PATCH /admin/students/{student_id}/repertory/{song_id}
+# ---------------------------------------------------------------------
+@app.patch("/admin/students/{student_id}/repertory/{song_id}")
+async def admin_student_patch_repertory(student_id: str, song_id: str, payload: StudentRepertoryUpdateRequest):
+    try:
+        if payload.status is not None and payload.status not in _VALID_REPERTORY_STATUSES:
+            raise HTTPException(status_code=400, detail=f"status inválido: {payload.status}")
+        if payload.progresso is not None and not (0 <= int(payload.progresso) <= 100):
+            raise HTTPException(status_code=400, detail="progresso deve ser 0..100")
+        def _sync():
+            sb = _build_supabase_client()
+            ex = sb.table("student_music_repertory") \
+                .select("id") \
+                .eq("student_id", student_id).eq("song_id", song_id).limit(1).execute()
+            if not ex.data or len(ex.data) == 0:
+                return None
+            rid = ex.data[0]["id"]
+            upd: dict[str, Any] = {}
+            if payload.status is not None:
+                upd["status"] = payload.status
+                # Auto-atualiza datas em mudanças clássicas
+                if payload.status == "learning" and not payload.data_inicio:
+                    try:
+                        from datetime import date
+                        upd["data_inicio"] = date.today().isoformat()
+                    except Exception:
+                        pass
+                if payload.status == "mastered" and not payload.data_conclusao:
+                    try:
+                        from datetime import date
+                        upd["data_conclusao"] = date.today().isoformat()
+                    except Exception:
+                        pass
+            if payload.progresso is not None:
+                upd["progresso"] = int(payload.progresso)
+            if payload.observacao is not None:
+                upd["observacao"] = payload.observacao
+            if payload.data_inicio is not None:
+                upd["data_inicio"] = payload.data_inicio
+            if payload.data_conclusao is not None:
+                upd["data_conclusao"] = payload.data_conclusao
+            if payload.ordem is not None:
+                upd["ordem"] = int(payload.ordem)
+            if not upd:
+                return ex.data[0]
+            r = sb.table("student_music_repertory").update(upd).eq("id", rid).execute()
+            return r.data[0] if r.data else None
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        row = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        if not row:
+            raise HTTPException(status_code=404, detail="vinculo_nao_encontrado")
+        return {"success": True, "updated": True, "row": row}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------
+# 4. DELETE /admin/students/{student_id}/repertory/{song_id}
+# ---------------------------------------------------------------------
+@app.delete("/admin/students/{student_id}/repertory/{song_id}")
+async def admin_student_remove_repertory(student_id: str, song_id: str):
+    try:
+        def _sync():
+            sb = _build_supabase_client()
+            sb.table("student_music_repertory") \
+                .delete() \
+                .eq("student_id", student_id).eq("song_id", song_id).execute()
+            return True
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, "deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------
+# 5. GET /admin/students/{student_id}/repertory/suggestions
+# ---------------------------------------------------------------------
+@app.get("/admin/students/{student_id}/repertory/suggestions")
+async def admin_student_repertory_suggestions(student_id: str, limit: Optional[int] = 30):
+    """Sugestões pedagógicas baseadas no Perfil Musical. Scoring modular explicável."""
+    try:
+        def _sync() -> dict[str, Any]:
+            sb = _build_supabase_client()
+            # 1) Carrega Perfil Musical do aluno
+            profile = dict(_STUDENT_MUSIC_PROFILE_DEFAULTS)
+            try:
+                pr = sb.table("student_music_profiles") \
+                    .select("*").eq("student_id", student_id).limit(1).execute()
+                if pr.data and len(pr.data) > 0:
+                    row = pr.data[0]
+                    for k, v in row.items():
+                        if k in ("id", "student_id", "created_at", "updated_at"): continue
+                        if isinstance(_STUDENT_MUSIC_PROFILE_DEFAULTS.get(k), dict) and isinstance(v, dict):
+                            profile[k] = {**_STUDENT_MUSIC_PROFILE_DEFAULTS[k], **v}
+                        elif isinstance(_STUDENT_MUSIC_PROFILE_DEFAULTS.get(k), list) and isinstance(v, list):
+                            profile[k] = v if v else _STUDENT_MUSIC_PROFILE_DEFAULTS[k]
+                        else:
+                            profile[k] = v if v is not None else _STUDENT_MUSIC_PROFILE_DEFAULTS.get(k)
+            except Exception as _pm:
+                if not _is_table_or_relation_missing_error(_pm, "student_music_profiles"):
+                    raise
+
+            # 2) Já existentes no repertório → excluir da lista (item 12)
+            existing_ids: set[str] = set()
+            try:
+                ex = sb.table("student_music_repertory") \
+                    .select("song_id").eq("student_id", student_id).execute()
+                for r in (ex.data or []):
+                    if r.get("song_id"):
+                        existing_ids.add(str(r["song_id"]))
+            except Exception as _re:
+                if not _is_table_or_relation_missing_error(_re, "student_music_repertory"):
+                    raise
+
+            # 3) Todas as músicas (usando helper FONTE ÚNICA dos filtros).
+            all_songs = _lib_music_query_songs_sync(
+                limit=5000,
+                operation_label="music:suggest:all"
+            )
+
+            # 4) Scoring para cada música + filtro exclude
+            MAX_THEORETICO = 105
+            candidates = []
+            for s in all_songs:
+                sid = str(s.get("id") or "")
+                if not sid or sid in existing_ids:
+                    continue
+                raw, reasons = _calc_song_match(s, profile)
+                # Normaliza 0..100 (inteiro → "94/100" no front)
+                score_norm = min(100, max(0, int(round((raw / MAX_THEORETICO) * 100)))) if raw > 0 else 0
+                if not reasons:
+                    reasons.append("~ Nenhum critério específico atingido")
+                candidates.append({
+                    "song": s,
+                    "score": score_norm,
+                    "reasons": reasons,
+                    "_raw": raw,
+                })
+
+            # 5) Ordena por score desc. Top N.
+            candidates.sort(key=lambda x: (x["_raw"], x["score"]), reverse=True)
+            top_n = candidates[: max(1, int(limit or 30))]
+            # Remove campo interno
+            for c in top_n:
+                c.pop("_raw", None)
+            # Fallback: se nenhum critério bateu e a biblioteca tem músicas,
+            # devolve as primeiras 5 como "Repertório geral", com razão neutra.
+            if not top_n and all_songs:
+                for s in list(all_songs)[:5]:
+                    sid = str(s.get("id") or "")
+                    if not sid or sid in existing_ids: continue
+                    top_n.append({
+                        "song": s,
+                        "score": 30,
+                        "reasons": ["• Sugestão neutra (criterios insuficientes no perfil)"],
+                    })
+            return {"suggestions": top_n}
+
+        from concurrent.futures import ThreadPoolExecutor
+        import asyncio as _aio
+        loop = _aio.get_running_loop()
+        data = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
+        return {"success": True, **data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if _is_table_or_relation_missing_error(e):
+            return {"success": True, "suggestions": [], "note": "tabelas_nao_existem_aplique_migration"}
         raise HTTPException(status_code=500, detail=str(e))
 
 
