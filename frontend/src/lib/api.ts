@@ -154,7 +154,7 @@ export async function apiFetch(
       if (!err.message) err.message = formatApiError({ prefix, url }).replace(`${prefix} — `, '');
     }
     if (throwOnError) throw err;
-    throw err;
+    return undefined as unknown as Response;
   }
 }
 

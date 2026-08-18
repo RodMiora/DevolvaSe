@@ -587,29 +587,29 @@ const RepertoryCard: React.FC<RepCardProps> = ({ item, onOpenSong, onChangeStatu
 
   return (
     <div className={cn(
-      "group rounded-2xl border border-white/5 bg-black/30 hover:bg-black/45 p-3 space-y-2 transition",
+      "group rounded-2xl border border-white/5 bg-black/30 hover:bg-black/45 p-3 space-y-2 transition w-full min-w-0 overflow-hidden",
       "ring-1", ring,
     )}>
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2 min-w-0 w-full">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             <span className={cn("inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] md:text-[10px] font-bold text-black shrink-0", accent)}>
               {STATUS_LABEL[item.status]}
             </span>
             <button
               type="button"
               onClick={() => { if (s) onOpenSong(s); }}
-              className="text-xs md:text-sm font-bold text-white truncate min-w-0 text-left hover:underline underline-offset-2"
+              className="text-xs md:text-sm font-bold text-white truncate min-w-0 text-left hover:underline underline-offset-2 max-w-full"
               title="Ver detalhes da música na Biblioteca"
             >
-              <Music2 className="w-3.5 h-3.5 inline mr-1 text-zinc-300" />
-              {s?.title || `Música #${String(item.song_id).slice(0, 8)}`}
+              <Music2 className="w-3.5 h-3.5 inline mr-1 text-zinc-300 shrink-0" />
+              <span className="truncate">{s?.title || `Música #${String(item.song_id).slice(0, 8)}`}</span>
             </button>
           </div>
           {s?.artist ? (
-            <div className="text-[11px] text-zinc-400 truncate">{s.artist}</div>
+            <div className="text-[11px] text-zinc-400 truncate max-w-full">{s.artist}</div>
           ) : null}
-          <div className="mt-1"><SongMiniInfo s={s} /></div>
+          <div className="mt-1 min-w-0 max-w-full overflow-hidden"><SongMiniInfo s={s} /></div>
         </div>
         <div className="relative shrink-0" ref={menuRef}>
           <button
@@ -765,23 +765,23 @@ const RepertoryColumn: React.FC<{
     purple: "text-[#a855f7] border-[#a855f7]/30",
   };
   return (
-    <div className={cn("rounded-2xl border p-3 space-y-2.5 h-full", colorMap[col.accent])}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <div className={cn("rounded-2xl border p-3 space-y-2.5 h-full min-w-0 w-full", colorMap[col.accent])}>
+      <div className="flex items-center justify-between min-w-0 w-full gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className={cn(
-            "w-7 h-7 rounded-lg flex items-center justify-center border bg-black/20",
+            "w-7 h-7 rounded-lg flex items-center justify-center border bg-black/20 shrink-0",
             iconColor[col.accent]
           )}>{col.icon}</div>
-          <div>
-            <div className="text-xs font-bold text-white leading-tight">{col.title}</div>
-            <div className="text-[10px] text-zinc-500">{col.items.length} {col.items.length === 1 ? "música" : "músicas"}</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold text-white leading-tight truncate">{col.title}</div>
+            <div className="text-[10px] text-zinc-500 truncate">{col.items.length} {col.items.length === 1 ? "música" : "músicas"}</div>
           </div>
         </div>
       </div>
       {col.items.length === 0 ? (
-        <div className="text-xs text-zinc-500 p-2 rounded-lg bg-black/10">Nenhuma música nesta lista.</div>
+        <div className="text-xs text-zinc-500 p-2 rounded-lg bg-black/10 break-words">Nenhuma música nesta lista.</div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 min-w-0">
           {col.items.map((it) => (
             <RepertoryCard key={it.id || it.song_id} item={it} {...actions} />
           ))}
@@ -987,7 +987,7 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
         const data = await (res as any).json().catch(() => ({ items: [] }));
         setRepertoryItems(Array.isArray(data?.items) ? data.items : []);
       }
-    } finally {
+    } catch {} finally {
       setRepertoryLoading(false);
     }
   };
@@ -998,17 +998,22 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
       const [profileRes] = await Promise.all([
         apiFetch(`/admin/students/${studentId}/music-profile`, { method: "GET" },
           { prefix: "Erro ao carregar Perfil Musical", throwOnError: false, jsonBody: true }),
-        // Fire-and-forget do repertório para não bloquear o resto
         (async () => { try { await loadRepertory(); } catch {} })(),
       ]);
       if (profileRes && (profileRes as any).ok) {
         const data = await (profileRes as any).json().catch(() => ({ profile: null }));
         if (data?.profile) setProfile({ ...EMPTY_PROFILE, ...data.profile });
       }
-    } finally {
+    } catch {} finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!studentId) return;
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId]);
 
   // ------------ Persistência Rascunho (existente) ------------
   const readonly = !isEditing;
@@ -1334,9 +1339,9 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
   }
 
   return (
-    <div className="flex-1 w-full min-h-0 overflow-y-auto bg-[#050505]"
+    <div className="flex-1 w-full min-w-0 min-h-0 overflow-y-auto bg-[#050505]"
          style={{ WebkitOverflowScrolling: "touch" as any, touchAction: "pan-y" }}>
-      <div className="px-4 md:px-8 py-4 md:py-6 space-y-5 max-w-[1500px] mx-auto">
+      <div className="w-full px-3 md:px-6 py-4 md:py-6 space-y-4 md:space-y-5 min-w-0">
 
         {/* ====== Banner: rascunho de perfil recuperado ====== */}
         {spRestoreOpen && (
@@ -1714,35 +1719,37 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
             </div>
 
             {/* 7. Repertório (3 colunas com integração Biblioteca Musical ↔ Perfil Musical) */}
-            <div className="rounded-2xl border border-white/5 bg-[#0d0d0d] p-4 md:p-5 space-y-4">
-              <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-                <SectionHeader title="🎶 Repertório do Aluno" icon={<BookOpen className="w-5 h-5" />} sub="Vinculado diretamente à Biblioteca Musical (song_id — sem duplicação)" accent="purple" />
-                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="rounded-2xl border border-white/5 bg-[#0d0d0d] p-3 md:p-5 space-y-3 md:space-y-4 w-full min-w-0 overflow-hidden">
+              <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 min-w-0 w-full">
+                <div className="min-w-0 flex-1">
+                  <SectionHeader title="🎶 Repertório do Aluno" icon={<BookOpen className="w-5 h-5 shrink-0" />} sub="Vinculado diretamente à Biblioteca Musical (song_id — sem duplicação)" accent="purple" />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 w-full md:w-auto min-w-0">
                   <button
                     type="button"
                     onClick={() => setAddOpen(true)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-[#f97316] to-[#ef4444] text-white text-xs md:text-sm font-bold shadow-lg active:scale-[0.98] transition"
+                    className="flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#f97316] to-[#ef4444] text-white text-xs md:text-sm font-bold shadow-lg active:scale-[0.98] transition w-full sm:w-auto"
                   >
-                    <Plus className="w-4 h-4" /> Adicionar música
+                    <Plus className="w-4 h-4 shrink-0" /> <span className="truncate">Adicionar música</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setSuggestOpen(true)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-[#22c55e] via-[#10b981] to-[#0ea5e9] text-black text-xs md:text-sm font-bold shadow-lg active:scale-[0.98] transition"
+                    className="flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#22c55e] via-[#10b981] to-[#0ea5e9] text-black text-xs md:text-sm font-bold shadow-lg active:scale-[0.98] transition w-full sm:w-auto"
                   >
-                    <Sparkles className="w-4 h-4" /> Sugerir músicas para este aluno
+                    <Sparkles className="w-4 h-4 shrink-0" /> <span className="truncate">Sugerir músicas para este aluno</span>
                   </button>
                 </div>
               </div>
 
               {repertoryLoading ? (
-                <div className="text-xs text-zinc-400 p-3 rounded-xl bg-black/30 border border-white/5">🔄 Carregando repertório...</div>
+                <div className="text-xs text-zinc-400 p-3 rounded-xl bg-black/30 border border-white/5 break-words">🔄 Carregando repertório...</div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full min-w-0">
                   <RepertoryColumn
                     col={{
                       key: "learning", title: "🟡 Aprendendo", accent: "orange",
-                      icon: <Play className="w-4 h-4" />,
+                      icon: <Play className="w-4 h-4 shrink-0" />,
                       items: repertoryItems.filter(r => r.status === "learning"),
                     }}
                     actions={{ onOpenSong: openSong, onChangeStatus: changeStatusRep, onProgress: changeProgressRep, onObservation: changeObservationRep, onRemove: removeRep }}
@@ -1750,7 +1757,7 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
                   <RepertoryColumn
                     col={{
                       key: "mastered", title: "🟢 Dominadas", accent: "green",
-                      icon: <Award className="w-4 h-4" />,
+                      icon: <Award className="w-4 h-4 shrink-0" />,
                       items: repertoryItems.filter(r => r.status === "mastered"),
                     }}
                     actions={{ onOpenSong: openSong, onChangeStatus: changeStatusRep, onProgress: changeProgressRep, onObservation: changeObservationRep, onRemove: removeRep }}
@@ -1758,7 +1765,7 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
                   <RepertoryColumn
                     col={{
                       key: "planned", title: "🔵 Próximas", accent: "purple",
-                      icon: <BookMarked className="w-4 h-4" />,
+                      icon: <BookMarked className="w-4 h-4 shrink-0" />,
                       items: repertoryItems.filter(r => r.status === "planned"),
                     }}
                     actions={{ onOpenSong: openSong, onChangeStatus: changeStatusRep, onProgress: changeProgressRep, onObservation: changeObservationRep, onRemove: removeRep }}
@@ -1766,10 +1773,10 @@ export default function StudentMusicProfile({ studentId, studentName }: Props) {
                 </div>
               )}
 
-              <p className="text-[11px] text-zinc-500 leading-relaxed">
+              <p className="text-[11px] text-zinc-500 leading-relaxed break-words">
                 📌 Fonte única: <code className="px-1 py-0.5 rounded bg-black/40 text-zinc-300">music_songs</code> (Biblioteca Musical).
                 Este painel armazena apenas o relacionamento:
-                {" "}<code className="px-1 py-0.5 rounded bg-black/40 text-zinc-300">aluno_id + song_id + status + progresso + observação</code>.
+                {" "}<code className="px-1 py-0.5 rounded bg-black/40 text-zinc-300 break-all">aluno_id + song_id + status + progresso + observação</code>.
               </p>
             </div>
 
