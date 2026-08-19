@@ -576,9 +576,19 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   ]);
 
   // Salvar rascunho sempre que modal aberto E algo mudar.
+  //
+  // ⚠️ REGRAS CRÍTICAS DE SEGURANÇA:
+  //   1. NUNCA chamar `clearBmDraft()` dentro deste useEffect, porque no unmount
+  //      (minimizar / trocar aba) React reseta TODOS os estados para default
+  //      (vazios), o que causaria hasContent=false → APAGAR o rascunho salvo.
+  //   2. clearBmDraft SÓ é chamado em ações EXPLÍCITAS do usuário:
+  //      - closeModal() confirmou saída
+  //      - dismissRestoreBanner() (Descartar)
+  //      - handleSubmit SUCCESS (após gravar no backend)
+  //   3. Só salvamos de fato se o modal ESTIVER ABERTO com conteúdo, para não
+  //      gerar ruído em ciclos de montagem inicial sem interação.
+  const isFirstSaveRef = useRef(true);
   useEffect(() => {
-    // Se modal NÃO está aberto e não tem edição em andamento, mantém limpo
-    // (mas NAO apaga se tinha algo salvo — outro restore pode precisar do modal_open).
     const hasContent =
       (f_title || f_artist || f_composer || f_description || f_mainStyle ||
        f_subStyle || f_timeSig || f_originalKey || f_chordsText ||
@@ -586,16 +596,15 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
       (f_year !== null) || (f_bpm !== null) || (f_chordCount !== null) ||
       f_hasBarre || f_has7 || f_hasExt ||
       f_applicableIds.length > 0 || f_objectiveIds.length > 0 || f_techniqueIds.length > 0;
-    if (!hasContent && !editing && !songModalOpen) {
-      // nada a salvar e modal fechado → limpa
-      clearBmDraft(teacherId);
-      return;
-    }
-    if (!hasContent && !editing) {
-      // modal aberto mas formulário VAZIO — não gera ruído
-      clearBmDraft(teacherId);
-      return;
-    }
+
+    // Skip do primeiro ciclo pós-montagem (valores vazios padrão).
+    // Assim evitamos salvar/exibir log desnecessário.
+    if (isFirstSaveRef.current) { isFirstSaveRef.current = false; return; }
+
+    if (!songModalOpen && !editing) return;          // NÃO mexer no storage se modal fechado
+    if (!songModalOpen && !hasContent) return;        // Se modal fechou vazio → também não faz nada
+    if (!hasContent && !editing) return;              // Modal aberto mas sem conteúdo → não salva
+
     const draft: BibliotecaMusicalDraft = {
       saved_at_ms: Date.now(),
       editingSongId: editing?.id || null,
@@ -606,6 +615,8 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
       selectedTechniqueIds: [...f_techniqueIds],
     };
     saveBmDraft(teacherId, draft);
+    // eslint-disable-next-line no-console
+    console.log(`[BM draft save] modal_open=${songModalOpen} hasContent=${hasContent} editing=${!!editing} fieldsSaved=${String(draft.saved_at_ms)}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songModalOpen, draftFieldsSnapshot, f_applicableIds, f_objectiveIds, f_techniqueIds, editing?.id, teacherId]);
 
@@ -623,16 +634,28 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     if (!catalogsLoaded) return;
     if (!teacherId) return;
     draftRestoredRef.current = true;
-    // Se o usuário já voltou e abriu o modal manualmente, não sobrescreve nada.
-    if (songModalOpen) return;
+    // eslint-disable-next-line no-console
+    console.log(`[BM draft restore] running catalogsLoaded=${catalogsLoaded} teacherId=${teacherId?.slice(0, 8)} songs=${songs.length} songModalOpen=${songModalOpen}`);
+    if (songModalOpen) {
+      // eslint-disable-next-line no-console
+      console.log(`[BM draft restore] SKIP porque songModalOpen=true (usuário já abriu)`);
+      return;
+    }
     const d = loadBmDraft(teacherId);
+    // eslint-disable-next-line no-console
+    console.log(`[BM draft restore] loadBmDraft result=${d ? "FOUND saved_at=" + String(d.saved_at_ms) + " modal_open=" + String(d.modal_open) : "NULL"}`);
     if (!d) { setShowRestoreBanner(false); return; }
     const ageMs = Date.now() - (d.saved_at_ms || 0);
     const isFresh7d = ageMs < (7 * 24 * 3600 * 1000);
-    if (!isFresh7d) { clearBmDraft(teacherId); setShowRestoreBanner(false); return; }
-    // Mostra banner, guarda no pending — espera clique do usuário.
+    if (!isFresh7d) {
+      clearBmDraft(teacherId);
+      setShowRestoreBanner(false);
+      return;
+    }
     pendingDraftRef.current = d;
     setShowRestoreBanner(true);
+    // eslint-disable-next-line no-console
+    console.log(`[BM draft restore] ✅ BANNER EXIBIDO ageMs=${ageMs}ms fieldsCount=${Object.keys(d.fields || {}).length}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogsLoaded, teacherId, songs.length, songModalOpen]);
 
