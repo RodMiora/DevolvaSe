@@ -575,6 +575,14 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     f_lyrics, f_listenUrl,
   ]);
 
+  // ===== DECLARAÇÃO DE REFS (bloco único, ANTES de useEffects) =====
+  // Mantém a ordem dos hooks 100% estática entre renders.
+  // Elimina warning do React 19 StrictMode + HMR: "Expected static flag was missing".
+  const isFirstSaveRef = useRef(true);
+  const draftRestoredRef = useRef(false);
+  const pendingDraftRef = useRef<BibliotecaMusicalDraft | null>(null);
+  // ===== FIM DECLARAÇÃO REFS =====
+
   // Salvar rascunho sempre que modal aberto E algo mudar.
   //
   // ⚠️ REGRAS CRÍTICAS DE SEGURANÇA:
@@ -587,7 +595,6 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   //      - handleSubmit SUCCESS (após gravar no backend)
   //   3. Só salvamos de fato se o modal ESTIVER ABERTO com conteúdo, para não
   //      gerar ruído em ciclos de montagem inicial sem interação.
-  const isFirstSaveRef = useRef(true);
   useEffect(() => {
     const hasContent =
       (f_title || f_artist || f_composer || f_description || f_mainStyle ||
@@ -625,9 +632,7 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   // - SEMPRE que existir um rascunho VÁLIDO (< 7 dias) mostra o banner:
   //    "Rascunho recuperado" + botões [Descartar] [Continuar rascunho]
   // - Usuário clica em Continuar rascunho → modal abre com os campos preenchidos.
-  const draftRestoredRef = useRef(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
-  const pendingDraftRef = useRef<BibliotecaMusicalDraft | null>(null);
 
   useEffect(() => {
     if (draftRestoredRef.current) return;
