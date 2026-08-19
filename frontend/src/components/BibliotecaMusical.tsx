@@ -24,6 +24,8 @@ import {
   BookOpen,
   Guitar,
   Headphones,
+  AlertTriangle,
+  Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch, apiAlert } from "@/lib/api";
@@ -112,14 +114,37 @@ const SimpleModal: React.FC<{
   onClose: () => void;
   children: React.ReactNode;
   maxWidthClass?: string;
-}> = ({ open, title, onClose, children, maxWidthClass = "max-w-2xl" }) => {
+  closeOnOverlayClick?: boolean;
+  closeOnEsc?: boolean;
+  onRequestClose?: () => boolean | void;
+}> = ({ open, title, onClose, children, maxWidthClass = "max-w-2xl", closeOnOverlayClick = true, closeOnEsc = true, onRequestClose }) => {
   if (!open) return null;
+  const handleRequestClose = () => {
+    if (onRequestClose) {
+      const allow = onRequestClose();
+      if (allow === false) return;
+    }
+    onClose();
+  };
+  useEffect(() => {
+    if (!open || !closeOnEsc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); handleRequestClose(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, closeOnEsc]);
+
   return (
-    <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className={cn("w-full", maxWidthClass, "rounded-2xl border border-white/10 bg-[#0d0d0d] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl")}>
+    <div className="fixed inset-0 z-[150] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+         onClick={() => { if (closeOnOverlayClick) handleRequestClose(); }}>
+      <div className={cn("w-full", maxWidthClass, "rounded-2xl border border-white/10 bg-[#0d0d0d] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl")}
+           onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 md:px-6 py-4 border-b border-white/5">
-          <h3 className="text-white font-bold text-lg">{title}</h3>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition">
+          <h3 className="text-white font-bold text-lg truncate min-w-0">{title}</h3>
+          <button onClick={handleRequestClose}
+            className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition min-w-[44px] min-h-[44px] flex items-center justify-center shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -455,21 +480,47 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     setArr(arr.includes(id) ? arr.filter(i => i !== id) : [...arr, id]);
 
   // ============ LOADS ============
+  const [catalogsError, setCatalogsError] = useState<string | null>(null);
+  const [catalogsFallback, setCatalogsFallback] = useState<string[]>([]);
   const loadCatalogs = useCallback(async () => {
     try {
+      setCatalogsError(null);
       const res = await apiFetch('/admin/music/catalogs', { method: 'GET' },
         { prefix: 'Erro ao carregar catálogos da biblioteca musical', throwOnError: false, bearer: true });
       if (res && res.ok) {
         const data = await res.json().catch(() => ({ instruments:[], objectives:[], techniques:[], styles:[] }));
-        setCatalogs({
-          instruments: (data?.instruments || []).map((r: any) => ({ id: String(r.id), name: r.name })),
-          objectives: (data?.objectives || []).map((r: any) => ({ id: String(r.id), name: r.name, slug: r.slug })),
-          techniques: (data?.techniques || []).map((r: any) => ({ id: String(r.id), name: r.name, slug: r.slug, category: r.category })),
-          styles: data?.styles || [],
-        });
+        const nextInstr = (data?.instruments || []).map((r: any) => ({ id: String(r.id), name: r.name }));
+        const nextObj   = (data?.objectives || []).map((r: any) => ({ id: String(r.id), name: r.name, slug: r.slug }));
+        const nextTec   = (data?.techniques || []).map((r: any) => ({ id: String(r.id), name: r.name, slug: r.slug, category: r.category }));
+        const nextSty   = Array.isArray(data?.styles) ? data.styles : [];
+
+        setCatalogs({ instruments: nextInstr, objectives: nextObj, techniques: nextTec, styles: nextSty });
         setCatalogsLoaded(true);
+
+        const fb: string[] = Array.isArray(data?._used_fallback) ? data._used_fallback : [];
+        setCatalogsFallback(fb);
+
+        // Se os catálogos vieram vazios mesmo assim, mostra um aviso (não deve mais ocorrer
+        // com fallback do backend, mas preserva como proteção adicional).
+        const empty: string[] = [];
+        if (nextInstr.length === 0) empty.push("Instrumentos");
+        if (nextObj.length === 0) empty.push("Objetivos pedagógicos");
+        if (nextTec.length === 0) empty.push("Técnicas");
+        if (empty.length > 0) {
+          setCatalogsError(`Aviso: alguns catálogos estão vazios (${empty.join(", ")}). Alguns selects podem ficar sem opções.`);
+        } else if (fb.length > 0) {
+          // Apenas info não-urgente: não bloqueia fluxo.
+        }
+      } else {
+        setCatalogsLoaded(true);
+        setCatalogsError("Não foi possível carregar os catálogos (instrumentos/objetivos/técnicas) do servidor. Verifique a conexão com o backend.");
       }
-    } catch (e) { apiAlert("Erro ao carregar catálogos", e); }
+    } catch (e) {
+      setCatalogsLoaded(true);
+      const msg = e instanceof Error ? e.message : "Erro desconhecido";
+      setCatalogsError(`Falha ao carregar catálogos da Biblioteca Musical: ${msg}`);
+      apiAlert("Erro ao carregar catálogos", e);
+    }
   }, []);
 
   const loadSongs = useCallback(async () => {
@@ -605,13 +656,56 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     setShowRestoreBanner(false);
   };
 
-  // Fechar modal com limpeza do rascunho (já existe closeModal).
+  // Dirty = formulário tem conteúdo preenchido / edição em andamento não salva
+  const formDirty = useMemo(() => {
+    if (editing) return true;
+    const hasText = Boolean(
+      f_title || f_artist || f_composer || f_description ||
+      f_mainStyle || f_subStyle || f_timeSig || f_originalKey ||
+      f_chordsText || f_lyrics || f_listenUrl
+    );
+    const hasNums = (f_year !== null) || (f_bpm !== null) || (f_chordCount !== null);
+    const hasBools = f_hasBarre || f_has7 || f_hasExt;
+    const hasSelects = Boolean(
+      f_predominant || f_level || f_rhythmC || f_harmC || f_techC
+    );
+    const hasMulti = f_applicableIds.length > 0 || f_objectiveIds.length > 0 || f_techniqueIds.length > 0;
+    return hasText || hasNums || hasBools || hasSelects || hasMulti;
+  }, [
+    editing,
+    f_title, f_artist, f_composer, f_description,
+    f_mainStyle, f_subStyle, f_timeSig, f_originalKey,
+    f_chordsText, f_lyrics, f_listenUrl,
+    f_year, f_bpm, f_chordCount,
+    f_hasBarre, f_has7, f_hasExt,
+    f_predominant, f_level, f_rhythmC, f_harmC, f_techC,
+    f_applicableIds, f_objectiveIds, f_techniqueIds,
+  ]);
+
+  // Fechar modal com limpeza do rascunho — PERGUNTA se dirty.
   const closeModal = () => {
+    if (formDirty) {
+      const ok = window.confirm("Deseja realmente sair? Os dados preenchidos serão perdidos.");
+      if (!ok) return;
+    }
     clearBmDraft(teacherId);
     pendingDraftRef.current = null;
     setShowRestoreBanner(false);
     setSongModalOpen(false);
     resetForm();
+  };
+
+  // Chamado pelo SimpleModal ao clicar fora / ESC / X — retorna false para bloquear.
+  const handleModalRequestClose = (): boolean => {
+    if (!formDirty) return true;
+    const ok = window.confirm("Deseja realmente sair? Os dados preenchidos serão perdidos.");
+    if (!ok) return false;
+    clearBmDraft(teacherId);
+    pendingDraftRef.current = null;
+    setShowRestoreBanner(false);
+    resetForm();
+    setSongModalOpen(false);
+    return true;
   };
 
   // Confirmar beforeunload se rascunho existir.
@@ -1357,8 +1451,26 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
         open={songModalOpen}
         onClose={closeModal}
         maxWidthClass="max-w-4xl"
+        closeOnOverlayClick={!formDirty}
+        closeOnEsc={true}
+        onRequestClose={handleModalRequestClose}
         title={editing ? `✏️ Editando: ${editing.title}` : "🎵 Cadastrar nova música"}
       >
+        {catalogsError ? (
+          <div className="px-3 py-2.5 rounded-xl border border-[#ef4444]/40 bg-[#ef4444]/10 text-[12px] md:text-sm text-[#fecaca] flex items-start gap-2 break-words">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[#ef4444]" />
+            <div className="leading-snug">{catalogsError}</div>
+          </div>
+        ) : catalogsFallback.length > 0 ? (
+          <div className="px-3 py-2.5 rounded-xl border border-[#f59e0b]/40 bg-[#f59e0b]/10 text-[12px] md:text-sm text-[#fde68a] flex items-start gap-2 break-words">
+            <Info className="w-4 h-4 shrink-0 mt-0.5 text-[#f59e0b]" />
+            <div className="leading-snug">
+              💡 Usando lista padrão para: <b>{catalogsFallback.join(", ")}</b>.
+              Estes valores ficarão disponíveis nos selects. Para usar sua própria lista,
+              cadastre as opções nas respectivas tabelas do Supabase.
+            </div>
+          </div>
+        ) : null}
         <div className="space-y-6">
           {/* Infos básicas */}
           <div>

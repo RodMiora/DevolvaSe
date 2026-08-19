@@ -3044,15 +3044,81 @@ def _lib_music_query_songs_sync(
 async def admin_music_get_catalogs():
     """Retorna instrumentos, objetivos e técnicas cadastrados (filtros front-end).
     Melhor desempenho: 1 única requisição para popular todo o header de filtros.
+
+    SEMPRE retorna listas NÃO-VAZIAS: se tabela estiver vazia/não existir,
+    injeta fallbacks estáticos (bom para primeira utilização / migração parcial).
     """
     from concurrent.futures import ThreadPoolExecutor
     import asyncio as _aio
+    import uuid as _uuid
+
+    DEFAULT_INSTRUMENTS: list[dict] = [
+        {"id": "inst_guitarra", "name": "Guitarra"},
+        {"id": "inst_violao",   "name": "Violão"},
+        {"id": "inst_baixo",    "name": "Baixo"},
+        {"id": "inst_bateria",  "name": "Bateria"},
+        {"id": "inst_teclado",  "name": "Teclado"},
+        {"id": "inst_piano",    "name": "Piano"},
+        {"id": "inst_voz",      "name": "Voz / Canto"},
+        {"id": "inst_violino",  "name": "Violino"},
+        {"id": "inst_cavaquinho","name": "Cavaquinho"},
+        {"id": "inst_ukulele",  "name": "Ukulele"},
+        {"id": "inst_sax",      "name": "Saxofone"},
+        {"id": "inst_flauta",   "name": "Flauta"},
+        {"id": "inst_trompete", "name": "Trompete"},
+        {"id": "inst_acordeon", "name": "Acordeon"},
+        {"id": "inst_outro",    "name": "Outro"},
+    ]
+
+    DEFAULT_OBJECTIVES: list[dict] = [
+        {"id": "obj_dedilhado",     "name": "Treinar dedilhado / fingerstyle", "slug": "dedilhado"},
+        {"id": "obj_acordes",       "name": "Fixar troca de acordes",          "slug": "acordes"},
+        {"id": "obj_pestana",       "name": "Introduzir pestana / barré",      "slug": "pestana"},
+        {"id": "obj_ritmo",         "name": "Ritmo e levada",                  "slug": "ritmo"},
+        {"id": "obj_escala",        "name": "Escalas e improviso",             "slug": "escalas"},
+        {"id": "obj_leitura",       "name": "Leitura de cifra / partitura",    "slug": "leitura"},
+        {"id": "obj_percepcao",     "name": "Percepção musical / ouvido",      "slug": "percepcao"},
+        {"id": "obj_canto",         "name": "Acompanhamento com canto",        "slug": "canto"},
+        {"id": "obj_repertorio",    "name": "Ampliar repertório",              "slug": "repertorio"},
+        {"id": "obj_harmonia",      "name": "Entender harmonia funcional",     "slug": "harmonia"},
+    ]
+
+    DEFAULT_TECHNIQUES: list[dict] = [
+        {"id": "tec_dedilhado",  "name": "Dedilhado",          "slug": "dedilhado",  "category": "Técnica"},
+        {"id": "tec_pestana",    "name": "Pestana / Barré",    "slug": "pestana",    "category": "Técnica"},
+        {"id": "tec_hammer",     "name": "Hammer-on",          "slug": "hammer",     "category": "Técnica"},
+        {"id": "tec_pull",       "name": "Pull-off",           "slug": "pull",       "category": "Técnica"},
+        {"id": "tec_slide",      "name": "Slide",              "slug": "slide",      "category": "Técnica"},
+        {"id": "tec_bend",       "name": "Bend / Curvatura",   "slug": "bend",       "category": "Técnica"},
+        {"id": "tec_arpejo",     "name": "Arpejo",             "slug": "arpejo",     "category": "Harmonia"},
+        {"id": "tec_cifra",      "name": "Cifra popular",      "slug": "cifra",      "category": "Harmonia"},
+        {"id": "tec_bossa",      "name": "Ritmo Bossa Nova",   "slug": "bossa",      "category": "Ritmo"},
+        {"id": "tec_rock",       "name": "Ritmo Rock",         "slug": "rock",       "category": "Ritmo"},
+        {"id": "tec_reggae",     "name": "Ritmo Reggae",       "slug": "reggae",     "category": "Ritmo"},
+        {"id": "tec_gospel",     "name": "Levada Gospel",      "slug": "gospel",     "category": "Ritmo"},
+        {"id": "tec_compasso_duplo", "name": "Compasso duplo", "slug": "compassoduplo", "category": "Ritmo"},
+        {"id": "tec_strumming",  "name": "Strumming",          "slug": "strumming",  "category": "Ritmo"},
+        {"id": "tec_bateria1", "name": "Ritmo Bateria - Básico", "slug": "bat_basico", "category": "Bateria"},
+        {"id": "tec_bateria2", "name": "Ritmo Bateria - Rock",   "slug": "bat_rock",   "category": "Bateria"},
+        {"id": "tec_bateria3", "name": "Ritmo Bateria - Bossa",  "slug": "bat_bossa",  "category": "Bateria"},
+        {"id": "tec_bateria4", "name": "Ritmo Bateria - Reggae", "slug": "bat_reggae", "category": "Bateria"},
+    ]
+
+    DEFAULT_STYLES: list[str] = [
+        "Gospel", "Worship", "Bossa Nova", "MPB", "Samba", "Sertanejo",
+        "Forró", "Axé", "Pagode", "Rock", "Pop", "Jazz", "Blues",
+        "Country", "Reggae", "Música Clássica", "Funk", "R&B", "Soul",
+        "Bossa Nova Gospel", "Hinos Antigos", "Corinhos", "Lo-fi",
+        "Indie", "Alternativo", "Hard Rock", "Metal", "Bossa Nova",
+    ]
+
     try:
         def _sync():
             instruments: list[dict] = []
             objectives: list[dict] = []
             techniques: list[dict] = []
             styles: list[str] = []
+            used_fallback_for: list[str] = []
 
             # Instrumentos (usa tabela instruments existente)
             try:
@@ -3062,6 +3128,7 @@ async def admin_music_get_catalogs():
                 instruments = list(r.data or [])
             except Exception as _e:
                 if not _is_table_or_relation_missing_error(_e, "instruments"): raise
+                used_fallback_for.append("instruments")
 
             # Objetivos pedagógicos
             try:
@@ -3071,6 +3138,7 @@ async def admin_music_get_catalogs():
                 objectives = list(r.data or [])
             except Exception as _e:
                 if not _is_table_or_relation_missing_error(_e, "music_pedagogical_objectives"): raise
+                used_fallback_for.append("objectives")
 
             # Técnicas
             try:
@@ -3080,6 +3148,7 @@ async def admin_music_get_catalogs():
                 techniques = list(r.data or [])
             except Exception as _e:
                 if not _is_table_or_relation_missing_error(_e, "music_techniques"): raise
+                used_fallback_for.append("techniques")
 
             # Estilos (distintos a partir da coluna main_style)
             try:
@@ -3094,8 +3163,40 @@ async def admin_music_get_catalogs():
                 styles.sort()
             except Exception as _e:
                 if not _is_table_or_relation_missing_error(_e, "music_songs"): raise
+                used_fallback_for.append("styles")
 
-            return {"instruments": instruments, "objectives": objectives, "techniques": techniques, "styles": styles}
+            # Fallback para listas VAZIAS (tabela existe mas não tem nada,
+            # ou tabela não existe). Evita selects vazios no front-end.
+            def _merge(current: list[dict], defaults: list[dict]) -> list[dict]:
+                if current and len(current) > 0:
+                    return current
+                return defaults
+
+            def _merge_styles(cur: list[str], defaults: list[str]) -> list[str]:
+                merged: list[str] = []
+                seen_s: set[str] = set()
+                for v in cur + defaults:
+                    s = str(v).strip()
+                    if s and s not in seen_s:
+                        seen_s.add(s); merged.append(s)
+                return merged
+
+            final_instruments = _merge(instruments, DEFAULT_INSTRUMENTS)
+            final_objectives = _merge(objectives, DEFAULT_OBJECTIVES)
+            final_techniques = _merge(techniques, DEFAULT_TECHNIQUES)
+            final_styles = _merge_styles(styles, DEFAULT_STYLES)
+
+            if len(instruments) == 0: used_fallback_for.append("instruments")
+            if len(objectives) == 0: used_fallback_for.append("objectives")
+            if len(techniques) == 0: used_fallback_for.append("techniques")
+
+            return {
+                "instruments": final_instruments,
+                "objectives": final_objectives,
+                "techniques": final_techniques,
+                "styles": final_styles,
+                "_used_fallback": sorted(set(used_fallback_for)),
+            }
 
         loop = _aio.get_running_loop()
         data = await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _sync)
@@ -3103,7 +3204,15 @@ async def admin_music_get_catalogs():
     except HTTPException: raise
     except Exception as e:
         if _is_table_or_relation_missing_error(e):
-            return {"success": True, "note": "music_tables_not_yet_created", "instruments": [], "objectives": [], "techniques": [], "styles": []}
+            return {
+                "success": True,
+                "note": "music_tables_not_yet_created_fallback_applied",
+                "instruments": DEFAULT_INSTRUMENTS,
+                "objectives": DEFAULT_OBJECTIVES,
+                "techniques": DEFAULT_TECHNIQUES,
+                "styles": DEFAULT_STYLES,
+                "_used_fallback": ["instruments", "objectives", "techniques", "styles"],
+            }
         raise HTTPException(status_code=500, detail=str(e))
 
 
