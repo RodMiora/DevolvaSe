@@ -609,10 +609,11 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [songModalOpen, draftFieldsSnapshot, f_applicableIds, f_objectiveIds, f_techniqueIds, editing?.id, teacherId]);
 
-  // Restaurar rascunho AUTOMATICAMENTE APÓS carregar catálogos.
-  // - Se rascunho RECENTE (<= 15 min) E modal_open==true → abre o modal direto, preenche,
-  //   SEM mostrar banner, SEM esperar clique do usuário. Comportamento como "nunca fechou".
-  // - Se rascunho MAIS ANTIGO ou modal_open==false → mostra banner "Rascunho recuperado" (padrão antigo).
+  // Restaurar rascunho via BANNER (comportamento simples e previsível):
+  // - NUNCA reabre o modal sozinho.
+  // - SEMPRE que existir um rascunho VÁLIDO (< 7 dias) mostra o banner:
+  //    "Rascunho recuperado" + botões [Descartar] [Continuar rascunho]
+  // - Usuário clica em Continuar rascunho → modal abre com os campos preenchidos.
   const draftRestoredRef = useRef(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
   const pendingDraftRef = useRef<BibliotecaMusicalDraft | null>(null);
@@ -620,47 +621,20 @@ export default function BibliotecaMusical({ teacherId }: { teacherId?: string | 
   useEffect(() => {
     if (draftRestoredRef.current) return;
     if (!catalogsLoaded) return;
+    if (!teacherId) return;
     draftRestoredRef.current = true;
-    // Se o modal JÁ ESTÁ ABERTO neste mount, NÃO sobrescreve com draft antigo.
+    // Se o usuário já voltou e abriu o modal manualmente, não sobrescreve nada.
     if (songModalOpen) return;
     const d = loadBmDraft(teacherId);
-    if (!d) return;
+    if (!d) { setShowRestoreBanner(false); return; }
     const ageMs = Date.now() - (d.saved_at_ms || 0);
-    const isRecent = ageMs <= 15 * 60 * 1000; // 15 min
-    const wasOpen = !!d.modal_open;
-    if (isRecent && wasOpen) {
-      // Auto-restaura com modal aberto, silenciosamente.
-      const f: Record<string, any> = d.fields || {};
-      if (d.editingSongId && songs.length > 0) {
-        const sng = songs.find(s => s.id === d.editingSongId);
-        if (sng) setEditing(sng);
-      }
-      setF_title(f.f_title || ""); setF_artist(f.f_artist || "");
-      setF_composer(f.f_composer || ""); setF_year(f.f_year ?? null);
-      setF_description(f.f_description || "");
-      setF_mainStyle(f.f_mainStyle || ""); setF_subStyle(f.f_subStyle || "");
-      setF_timeSig(f.f_timeSig || ""); setF_bpm(f.f_bpm ?? null);
-      setF_originalKey(f.f_originalKey || "");
-      setF_predominant(f.f_predominant || ""); setF_level(f.f_level || "");
-      setF_rhythmC(f.f_rhythmC || ""); setF_harmC(f.f_harmC || ""); setF_techC(f.f_techC || "");
-      setF_chordCount(f.f_chordCount ?? null); setF_chordsText(f.f_chordsText || "");
-      setF_hasBarre(!!f.f_hasBarre); setF_has7(!!f.f_has7); setF_hasExt(!!f.f_hasExt);
-      setF_lyrics(f.f_lyrics || ""); setF_listenUrl(f.f_listenUrl || "");
-      setF_applicableIds(Array.isArray(d.selectedApplicableIds) ? d.selectedApplicableIds : []);
-      setF_objectiveIds(Array.isArray(d.selectedObjectiveIds) ? d.selectedObjectiveIds : []);
-      setF_techniqueIds(Array.isArray(d.selectedTechniqueIds) ? d.selectedTechniqueIds : []);
-      setSongModalOpen(true);
-      setShowRestoreBanner(false);
-      pendingDraftRef.current = null;
-      return;
-    }
-    // Rascunho antigo (>15min) ou sem modal_open → mostra banner esperando clique.
     const isFresh7d = ageMs < (7 * 24 * 3600 * 1000);
-    if (!isFresh7d) { clearBmDraft(teacherId); return; }
+    if (!isFresh7d) { clearBmDraft(teacherId); setShowRestoreBanner(false); return; }
+    // Mostra banner, guarda no pending — espera clique do usuário.
     pendingDraftRef.current = d;
     setShowRestoreBanner(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogsLoaded, teacherId, songModalOpen, songs.length]);
+  }, [catalogsLoaded, teacherId, songs.length, songModalOpen]);
 
   const applyPendingDraft = () => {
     const d = pendingDraftRef.current;
