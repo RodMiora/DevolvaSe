@@ -73,6 +73,7 @@ type DraftBase = { saved_at_ms: number };
 
 export type BibliotecaMusicalDraft = DraftBase & {
   editingSongId?: string | null;
+  modal_open?: boolean;
   fields: Record<string, any>;
   selectedApplicableIds?: string[];
   selectedObjectiveIds?: string[];
